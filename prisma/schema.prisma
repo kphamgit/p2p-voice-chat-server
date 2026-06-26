@@ -7,7 +7,429 @@ datasource db {
   provider = "postgresql"
 }
 
-model Level {
-  id   Int    @id @default(autoincrement())
-  name String
+/// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
+model ApiAssignment {
+  id                   BigInt                 @id @default(autoincrement())
+  createdAt            DateTime               @map("created_at") @db.Timestamptz(6)
+  quizId               BigInt                 @map("quiz_id")
+  categoryId           Int?                   @map("category_id")
+  apiQuiz              ApiQuiz                @relation(fields: [quizId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "api_assignment_quiz_id_35c4fdae_fk_api_quiz_id")
+  apiAssignmentstudent ApiAssignmentstudent[]
+
+  @@index([quizId], map: "api_assignment_quiz_id_35c4fdae")
+  @@map("api_assignment")
+}
+
+/// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
+model ApiAssignmentstudent {
+  id            BigInt        @id @default(autoincrement())
+  status        String        @db.VarChar(50)
+  assignedAt    DateTime      @map("assigned_at") @db.Timestamptz(6)
+  assignmentId  BigInt        @map("assignment_id")
+  userId        Int           @map("user_id")
+  apiAssignment ApiAssignment @relation(fields: [assignmentId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "api_assignmentstuden_assignment_id_c68d0cc2_fk_api_assig")
+  authUser      AuthUser      @relation(fields: [userId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "api_assignmentstudent_user_id_645ac643_fk_auth_user_id")
+
+  @@index([assignmentId], map: "api_assignmentstudent_assignment_id_c68d0cc2")
+  @@index([userId], map: "api_assignmentstudent_user_id_645ac643")
+  @@map("api_assignmentstudent")
+}
+
+/// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
+model ApiCard {
+  id            BigInt          @id @default(autoincrement())
+  text          String          @db.VarChar(200)
+  difficulty    Int             @db.SmallInt
+  quizId        BigInt?         @map("quiz_id")
+  definition    String
+  apiQuiz       ApiQuiz?        @relation(fields: [quizId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "api_card_quiz_id_72970dcf_fk_api_quiz_id")
+  apiCardreview ApiCardreview[]
+
+  @@index([quizId], map: "api_card_quiz_id_72970dcf")
+  @@map("api_card")
+}
+
+/// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
+model ApiCardreview {
+  id           BigInt    @id @default(autoincrement())
+  easiness     Float
+  interval     Int
+  repetitions  Int
+  nextReviewAt DateTime? @map("next_review_at") @db.Timestamptz(6)
+  cardId       BigInt    @map("card_id")
+  userId       Int       @map("user_id")
+  apiCard      ApiCard   @relation(fields: [cardId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "api_cardreview_card_id_0ff66926_fk_api_card_id")
+  authUser     AuthUser  @relation(fields: [userId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "api_cardreview_user_id_1c43bb85_fk_auth_user_id")
+
+  @@unique([userId, cardId], map: "api_cardreview_user_id_card_id_097fbde4_uniq")
+  @@index([cardId], map: "api_cardreview_card_id_0ff66926")
+  @@index([userId], map: "api_cardreview_user_id_1c43bb85")
+  @@map("api_cardreview")
+}
+
+/// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
+model ApiCategory {
+  id             BigInt    @id @default(autoincrement())
+  name           String    @db.VarChar(100)
+  categoryNumber Int       @map("category_number")
+  levelId        BigInt?   @map("level_id")
+  apiLevel       ApiLevel? @relation(fields: [levelId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "api_category_level_id_86ace77f_fk_api_level_id")
+  apiUnit        ApiUnit[]
+
+  @@index([levelId], map: "api_category_level_id_86ace77f")
+  @@map("api_category")
+}
+
+model ApiDictentry {
+  id              BigInt            @id @default(autoincrement())
+  headWord        String            @map("head_word") @db.VarChar(100)
+  source          String?           @db.VarChar(60)
+  apiPartofspeech ApiPartofspeech[]
+
+  @@unique([headWord, source], map: "api_dictentry_head_word_source_69e2b31e_uniq")
+  @@map("api_dictentry")
+}
+
+/// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
+model ApiExample {
+  id              BigInt   @id @default(autoincrement())
+  exampleNumber   Int      @map("example_number") @db.SmallInt
+  difficultyLevel Int      @map("difficulty_level") @db.SmallInt
+  sentence        String?
+  translation     String?
+  grammarPoint    String?  @map("grammar_point") @db.VarChar(100)
+  senseId         BigInt   @map("sense_id")
+  apiSense        ApiSense @relation(fields: [senseId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "api_example_sense_id_1bff6c7e_fk_api_sense_id")
+
+  @@index([senseId], map: "api_example_sense_id_1bff6c7e")
+  @@map("api_example")
+}
+
+/// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
+model ApiIdiom {
+  id              BigInt          @id @default(autoincrement())
+  phrase          String?
+  translation     String?
+  posId           BigInt          @map("pos_id")
+  apiPartofspeech ApiPartofspeech @relation(fields: [posId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "api_idiom_pos_id_574ca325_fk_api_partofspeech_id")
+
+  @@index([posId], map: "api_idiom_pos_id_574ca325")
+  @@map("api_idiom")
+}
+
+model ApiLevel {
+  id          BigInt        @id @default(autoincrement())
+  name        String        @db.VarChar(100)
+  levelNumber Int           @map("level_number")
+  apiCategory ApiCategory[]
+
+  @@map("api_level")
+}
+
+/// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
+model ApiPartofspeech {
+  id           BigInt       @id @default(autoincrement())
+  name         String       @db.VarChar(50)
+  pronCode     String?      @map("pron_code") @db.VarChar(50)
+  amevarPron   String?      @map("amevar_pron") @db.VarChar(50)
+  frequency    String?      @db.VarChar(20)
+  grammar      String?      @db.VarChar(100)
+  dictEntryId  BigInt       @map("dict_entry_id")
+  apiIdiom     ApiIdiom[]
+  apiDictentry ApiDictentry @relation(fields: [dictEntryId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "api_partofspeech_dict_entry_id_0a018e4b_fk_api_dictentry_id")
+  apiSense     ApiSense[]
+
+  @@index([dictEntryId], map: "api_partofspeech_dict_entry_id_0a018e4b")
+  @@map("api_partofspeech")
+}
+
+/// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
+model ApiProfile {
+  id       BigInt   @id @default(autoincrement())
+  group    String   @db.VarChar(100)
+  userId   Int      @unique @map("user_id")
+  authUser AuthUser @relation(fields: [userId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "api_profile_user_id_41309820_fk_auth_user_id")
+
+  @@map("api_profile")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
+model ApiQuestion {
+  id                 BigInt               @id @default(autoincrement())
+  questionNumber     Int                  @map("question_number")
+  format             Int                  @db.SmallInt
+  audioStr           String?              @map("audio_str") @db.VarChar(500)
+  instructions       String?
+  prompt             String?
+  content            String
+  answerKey          String               @map("answer_key")
+  score              Int?
+  timeout            Int?
+  buttonClozeOptions String?              @map("button_cloze_options")
+  explanation        String?
+  hint               String?              @db.VarChar(500)
+  quizId             BigInt               @map("quiz_id")
+  videoSegmentId     BigInt?              @map("video_segment_id")
+  contentLanguage    String?              @map("content_language") @db.VarChar(10)
+  questionPurpose    String?              @map("question_purpose") @db.VarChar(50)
+  apiQuiz            ApiQuiz              @relation(fields: [quizId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "api_question_quiz_id_72d0bb99_fk_api_quiz_id")
+  apiVideosegment    ApiVideosegment?     @relation(fields: [videoSegmentId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "api_question_video_segment_id_1e8d812f_fk_api_videosegment_id")
+  apiQuestionattempt ApiQuestionattempt[]
+
+  @@index([quizId], map: "api_question_quiz_id_72d0bb99")
+  @@index([videoSegmentId], map: "api_question_video_segment_id_1e8d812f")
+  @@map("api_question")
+}
+
+/// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
+model ApiQuestionattempt {
+  id                    BigInt         @id @default(autoincrement())
+  errorFlag             Boolean?       @map("error_flag")
+  score                 Int
+  completed             Boolean
+  answer                String?        @db.VarChar(1000)
+  questionId            BigInt         @map("question_id")
+  quizAttemptId         BigInt         @map("quiz_attempt_id")
+  questionAttemptNumber Int            @map("question_attempt_number")
+  corrected             Boolean?
+  reviewState           Boolean        @map("review_state")
+  stale                 Boolean
+  apiQuestion           ApiQuestion    @relation(fields: [questionId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "api_questionattempt_question_id_837a885e_fk_api_question_id")
+  apiQuizattempt        ApiQuizattempt @relation(fields: [quizAttemptId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "api_questionattempt_quiz_attempt_id_3b07976b_fk_api_quiza")
+
+  @@index([questionId], map: "api_questionattempt_question_id_837a885e")
+  @@index([quizAttemptId], map: "api_questionattempt_quiz_attempt_id_3b07976b")
+  @@map("api_questionattempt")
+}
+
+/// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
+model ApiQuiz {
+  id              BigInt            @id @default(autoincrement())
+  name            String            @db.VarChar(100)
+  quizNumber      Int               @map("quiz_number")
+  unitId          BigInt            @map("unit_id")
+  videoUrl        String?           @map("video_url") @db.VarChar
+  apiAssignment   ApiAssignment[]
+  apiCard         ApiCard[]
+  apiQuestion     ApiQuestion[]
+  apiUnit         ApiUnit           @relation(fields: [unitId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "api_quiz_unit_id_cc3012fe_fk_api_unit_id")
+  apiQuizattempt  ApiQuizattempt[]
+  apiVideosegment ApiVideosegment[]
+
+  @@index([unitId], map: "api_quiz_unit_id_cc3012fe")
+  @@map("api_quiz")
+}
+
+/// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
+model ApiQuizattempt {
+  id                  BigInt               @id @default(autoincrement())
+  userName            String               @map("user_name") @db.VarChar(50)
+  score               Int
+  createdAt           DateTime             @map("created_at") @db.Timestamptz(6)
+  updatedAt           DateTime             @map("updated_at") @db.Timestamptz(6)
+  completionStatus    String               @map("completion_status") @db.VarChar(50)
+  errorneousQuestions String               @map("errorneous_questions") @db.VarChar(200)
+  reviewState         Boolean              @map("review_state")
+  quizId              BigInt               @map("quiz_id")
+  apiQuestionattempt  ApiQuestionattempt[]
+  apiQuiz             ApiQuiz              @relation(fields: [quizId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "api_quizattempt_quiz_id_4b081504_fk_api_quiz_id")
+
+  @@index([quizId], map: "api_quizattempt_quiz_id_4b081504")
+  @@map("api_quizattempt")
+}
+
+/// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
+model ApiSense {
+  id              BigInt          @id @default(autoincrement())
+  senseNumber     Int             @map("sense_number") @db.SmallInt
+  definition      String?
+  defTranslation  String?         @map("def_translation")
+  crossReference  String?         @map("cross_reference") @db.VarChar(400)
+  grammar         String?         @db.VarChar(80)
+  relatedWords    String?         @map("related_words") @db.VarChar(200)
+  posId           BigInt          @map("pos_id")
+  apiExample      ApiExample[]
+  apiPartofspeech ApiPartofspeech @relation(fields: [posId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "api_sense_pos_id_0281e638_fk_api_partofspeech_id")
+
+  @@index([posId], map: "api_sense_pos_id_0281e638")
+  @@map("api_sense")
+}
+
+/// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
+model ApiUnit {
+  id          BigInt      @id @default(autoincrement())
+  name        String      @db.VarChar(100)
+  unitNumber  Int         @map("unit_number")
+  categoryId  BigInt      @map("category_id")
+  apiQuiz     ApiQuiz[]
+  apiCategory ApiCategory @relation(fields: [categoryId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "api_unit_category_id_4e8364f7_fk_api_category_id")
+
+  @@index([categoryId], map: "api_unit_category_id_4e8364f7")
+  @@map("api_unit")
+}
+
+/// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
+model ApiVideosegment {
+  id            BigInt        @id @default(autoincrement())
+  startTime     String        @map("start_time") @db.VarChar(50)
+  endTime       String        @map("end_time") @db.VarChar(50)
+  quizId        BigInt        @map("quiz_id")
+  segmentNumber Int           @map("segment_number")
+  apiQuestion   ApiQuestion[]
+  apiQuiz       ApiQuiz       @relation(fields: [quizId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "api_videosegment_quiz_id_f0dd4244_fk_api_quiz_id")
+
+  @@index([quizId], map: "api_videosegment_quiz_id_f0dd4244")
+  @@map("api_videosegment")
+}
+
+model AuthGroup {
+  id                   Int                    @id @default(autoincrement())
+  name                 String                 @unique @db.VarChar(150)
+  authGroupPermissions AuthGroupPermissions[]
+  authUserGroups       AuthUserGroups[]
+
+  @@index([name], map: "auth_group_name_a6ea08ec_like")
+  @@map("auth_group")
+}
+
+/// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
+model AuthGroupPermissions {
+  id             BigInt         @id @default(autoincrement())
+  groupId        Int            @map("group_id")
+  permissionId   Int            @map("permission_id")
+  authPermission AuthPermission @relation(fields: [permissionId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "auth_group_permissio_permission_id_84c5c92e_fk_auth_perm")
+  authGroup      AuthGroup      @relation(fields: [groupId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "auth_group_permissions_group_id_b120cbf9_fk_auth_group_id")
+
+  @@unique([groupId, permissionId], map: "auth_group_permissions_group_id_permission_id_0cd325b0_uniq")
+  @@index([groupId], map: "auth_group_permissions_group_id_b120cbf9")
+  @@index([permissionId], map: "auth_group_permissions_permission_id_84c5c92e")
+  @@map("auth_group_permissions")
+}
+
+/// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
+model AuthPermission {
+  id                      Int                       @id @default(autoincrement())
+  name                    String                    @db.VarChar(255)
+  contentTypeId           Int                       @map("content_type_id")
+  codename                String                    @db.VarChar(100)
+  authGroupPermissions    AuthGroupPermissions[]
+  djangoContentType       DjangoContentType         @relation(fields: [contentTypeId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "auth_permission_content_type_id_2f476e4b_fk_django_co")
+  authUserUserPermissions AuthUserUserPermissions[]
+
+  @@unique([contentTypeId, codename], map: "auth_permission_content_type_id_codename_01ab375a_uniq")
+  @@index([contentTypeId], map: "auth_permission_content_type_id_2f476e4b")
+  @@map("auth_permission")
+}
+
+model AuthUser {
+  id                      Int                       @id @default(autoincrement())
+  password                String                    @db.VarChar(128)
+  lastLogin               DateTime?                 @map("last_login") @db.Timestamptz(6)
+  isSuperuser             Boolean                   @map("is_superuser")
+  username                String                    @unique @db.VarChar(150)
+  firstName               String                    @map("first_name") @db.VarChar(150)
+  lastName                String                    @map("last_name") @db.VarChar(150)
+  email                   String                    @db.VarChar(254)
+  isStaff                 Boolean                   @map("is_staff")
+  isActive                Boolean                   @map("is_active")
+  dateJoined              DateTime                  @map("date_joined") @db.Timestamptz(6)
+  apiAssignmentstudent    ApiAssignmentstudent[]
+  apiCardreview           ApiCardreview[]
+  apiProfile              ApiProfile?
+  authUserGroups          AuthUserGroups[]
+  authUserUserPermissions AuthUserUserPermissions[]
+  djangoAdminLog          DjangoAdminLog[]
+
+  @@index([username], map: "auth_user_username_6821ab7c_like")
+  @@map("auth_user")
+}
+
+/// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
+model AuthUserGroups {
+  id        BigInt    @id @default(autoincrement())
+  userId    Int       @map("user_id")
+  groupId   Int       @map("group_id")
+  authGroup AuthGroup @relation(fields: [groupId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "auth_user_groups_group_id_97559544_fk_auth_group_id")
+  authUser  AuthUser  @relation(fields: [userId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "auth_user_groups_user_id_6a12ed8b_fk_auth_user_id")
+
+  @@unique([userId, groupId], map: "auth_user_groups_user_id_group_id_94350c0c_uniq")
+  @@index([groupId], map: "auth_user_groups_group_id_97559544")
+  @@index([userId], map: "auth_user_groups_user_id_6a12ed8b")
+  @@map("auth_user_groups")
+}
+
+/// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
+model AuthUserUserPermissions {
+  id             BigInt         @id @default(autoincrement())
+  userId         Int            @map("user_id")
+  permissionId   Int            @map("permission_id")
+  authPermission AuthPermission @relation(fields: [permissionId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "auth_user_user_permi_permission_id_1fbb5f2c_fk_auth_perm")
+  authUser       AuthUser       @relation(fields: [userId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "auth_user_user_permissions_user_id_a95ead1b_fk_auth_user_id")
+
+  @@unique([userId, permissionId], map: "auth_user_user_permissions_user_id_permission_id_14a6b632_uniq")
+  @@index([permissionId], map: "auth_user_user_permissions_permission_id_1fbb5f2c")
+  @@index([userId], map: "auth_user_user_permissions_user_id_a95ead1b")
+  @@map("auth_user_user_permissions")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+/// This model has constraints using non-default deferring rules and requires additional setup for migrations. Visit https://pris.ly/d/constraint-deferring for more info.
+model DjangoAdminLog {
+  id                Int                @id @default(autoincrement())
+  actionTime        DateTime           @map("action_time") @db.Timestamptz(6)
+  objectId          String?            @map("object_id")
+  objectRepr        String             @map("object_repr") @db.VarChar(200)
+  actionFlag        Int                @map("action_flag") @db.SmallInt
+  changeMessage     String             @map("change_message")
+  contentTypeId     Int?               @map("content_type_id")
+  userId            Int                @map("user_id")
+  djangoContentType DjangoContentType? @relation(fields: [contentTypeId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "django_admin_log_content_type_id_c4bce8eb_fk_django_co")
+  authUser          AuthUser           @relation(fields: [userId], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "django_admin_log_user_id_c564eba6_fk_auth_user_id")
+
+  @@index([contentTypeId], map: "django_admin_log_content_type_id_c4bce8eb")
+  @@index([userId], map: "django_admin_log_user_id_c564eba6")
+  @@map("django_admin_log")
+}
+
+model DjangoContentType {
+  id             Int              @id @default(autoincrement())
+  appLabel       String           @map("app_label") @db.VarChar(100)
+  model          String           @db.VarChar(100)
+  authPermission AuthPermission[]
+  djangoAdminLog DjangoAdminLog[]
+
+  @@unique([appLabel, model], map: "django_content_type_app_label_model_76bd3d3b_uniq")
+  @@map("django_content_type")
+}
+
+model DjangoMigrations {
+  id      BigInt   @id @default(autoincrement())
+  app     String   @db.VarChar(255)
+  name    String   @db.VarChar(255)
+  applied DateTime @db.Timestamptz(6)
+
+  @@map("django_migrations")
+}
+
+model DjangoSession {
+  sessionKey  String   @id @map("session_key") @db.VarChar(40)
+  sessionData String   @map("session_data")
+  expireDate  DateTime @map("expire_date") @db.Timestamptz(6)
+
+  @@index([expireDate], map: "django_session_expire_date_a5c62663")
+  @@index([sessionKey], map: "django_session_session_key_c0390e0f_like")
+  @@map("django_session")
+}
+
+// Voice-chat call recordings uploaded to S3 (Prisma-managed, not from Django).
+model Recording {
+  id           BigInt   @id @default(autoincrement())
+  url          String
+  s3Key        String   @map("s3_key")
+  localPeerId  String   @map("local_peer_id")
+  remotePeerId String   @map("remote_peer_id")
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz(6)
+
+  @@map("recording")
 }

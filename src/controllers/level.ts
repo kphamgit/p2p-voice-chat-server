@@ -4,8 +4,8 @@ import { prisma } from '../prisma.js';
 class LevelController {
     public async findAll(req: Request, res: Response): Promise<void> {
         try {
-            const data = await prisma.level.findMany({
-                orderBy: { name: 'asc' },
+            const data = await prisma.apiLevel.findMany({
+                orderBy: { levelNumber: 'asc' },
             });
             res.send(data);
         } catch (err: any) {
@@ -14,9 +14,9 @@ class LevelController {
     }
 
     public async findOne(req: Request, res: Response): Promise<void> {
-        const id = Number(req.params.id);
+        const id = BigInt(String(req.params.id));
         try {
-            const data = await prisma.level.findUnique({ where: { id } });
+            const data = await prisma.apiLevel.findUnique({ where: { id } });
             if (data) {
                 res.send(data);
             } else {

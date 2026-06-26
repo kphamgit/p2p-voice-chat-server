@@ -2,9 +2,9 @@ import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import { ExpressPeerServer } from "peer";
-// --- Database disabled for PeerJS-only testing (no DB provisioned yet) ---
-// import { prisma } from "./prisma.js";
-// import levelRoutes from "./routes/level.js";
+import recordingRoutes from "./routes/recording.js";
+import { prisma } from "./prisma.js";
+import levelRoutes from "./routes/level.js";
 
 const app = express();
 
@@ -18,13 +18,22 @@ const allowedOrigins = (process.env["CORS_ORIGIN"] ?? "http://localhost:5173")
 app.use(cors({ origin: allowedOrigins }));
 app.use(express.json());
 
-// app.use("/levels", levelRoutes); // DB-backed route, disabled for PeerJS-only testing
+app.use("/levels", levelRoutes);
+
+// Voice-chat recording uploads from the client (multipart; no DB needed yet).
+app.use("/recordings", recordingRoutes);
 
 const port = Number(process.env["PORT"]) || 3000;
 
 const server = app.listen(port, () => {
-  console.log(`✅ Server listening on http://localhost:${port}`);
+  console.log(`✅ Server listening on port ${port}`);
 });
+
+// Verify the database connection on startup (Prisma connects lazily otherwise).
+prisma
+  .$connect()
+  .then(() => console.log("✅ Database connection successful"))
+  .catch((err) => console.error("❌ Database connection failed:", err));
 
 // Mount the PeerJS signaling server on the existing Express server so it
 // shares the single port (required on Heroku, which exposes only $PORT).
@@ -35,7 +44,7 @@ app.use("/myapp", peerServer);
 
 // Clean up on shutdown.
 async function shutdown() {
-  // await prisma.$disconnect(); // DB disabled for PeerJS-only testing
+  await prisma.$disconnect();
   server.close(() => process.exit(0));
 }
 process.on("SIGINT", shutdown);

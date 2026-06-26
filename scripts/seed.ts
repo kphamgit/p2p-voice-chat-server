@@ -1,6 +1,14 @@
 import { prisma } from "../src/prisma.js";
 
-await prisma.level.createMany({ data: [{ name: "Beginner" }, { name: "Advanced" }] });
-const all = await prisma.level.findMany();
+// levelNumber is required on ApiLevel (no default), so it must be provided.
+await prisma.apiLevel.createMany({
+  data: [
+    { name: "Beginner", levelNumber: 1 },
+    { name: "Advanced", levelNumber: 2 },
+  ],
+});
+
+const all = await prisma.apiLevel.findMany({ orderBy: { levelNumber: "asc" } });
 console.log("seeded:", all);
+
 await prisma.$disconnect();
