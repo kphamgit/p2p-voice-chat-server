@@ -20,6 +20,15 @@ model Level {
   id          Int    @id @default(autoincrement())
   name        String
   levelNumber Int    @map("level_number")
+  units       Unit[] // back-relation: one Level has many Units (no DB column)
+}
+
+model Unit {
+  id         Int    @id @default(autoincrement())
+  name       String
+  unitNumber Int    @map("unit_number")
+  levelId    Int    @map("level_id") // FK column → Level.id
+  level      Level  @relation(fields: [levelId], references: [id])
 }
 
 // Voice-chat call recordings uploaded to S3.

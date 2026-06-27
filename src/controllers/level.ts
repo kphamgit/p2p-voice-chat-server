@@ -27,6 +27,24 @@ class LevelController {
         }
     }
 
+    // GET /levels/:id/units — list the units belonging to a level.
+    public async findUnits(req: Request, res: Response): Promise<void> {
+        try {
+            const id = Number(req.params.id);
+            const level = await prisma.level.findUnique({
+                where: { id },
+                include: { units: { orderBy: { unitNumber: 'asc' } } },
+            });
+            if (!level) {
+                res.status(404).send({ message: `Level ${req.params.id} not found.` });
+                return;
+            }
+            res.json(level.units);
+        } catch (err: any) {
+            res.status(500).send({ message: err.message || 'Error retrieving units.' });
+        }
+    }
+
     // GET /levels/:id — fetch one level.
     public async findOne(req: Request, res: Response): Promise<void> {
         try {
