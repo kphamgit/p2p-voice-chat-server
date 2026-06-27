@@ -4,7 +4,6 @@ import cors from "cors";
 import { ExpressPeerServer } from "peer";
 import recordingRoutes from "./routes/recording.js";
 import { prisma } from "./prisma.js";
-import levelRoutes from "./routes/level.js";
 
 const app = express();
 
@@ -18,9 +17,7 @@ const allowedOrigins = (process.env["CORS_ORIGIN"] ?? "http://localhost:5173")
 app.use(cors({ origin: allowedOrigins }));
 app.use(express.json());
 
-app.use("/levels", levelRoutes);
-
-// Voice-chat recording uploads from the client (multipart; no DB needed yet).
+// Voice-chat recording uploads + presigned playback URLs.
 app.use("/recordings", recordingRoutes);
 
 const port = Number(process.env["PORT"]) || 3000;

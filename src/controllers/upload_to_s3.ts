@@ -34,10 +34,11 @@ class UploadToS3 {
             s3: this.s3,
             bucket: this.bucket,
             contentType: multerS3.AUTO_CONTENT_TYPE,
-            key: (req: Request, file, cb) => {
-                console.log("file. name.", file.originalname)
-                const obj = JSON.parse(JSON.stringify(req.body));
-                cb(null, obj.s3_file_path + "/" + file.originalname);
+            key: (_req: Request, file, cb) => {
+                // Don't read req.body here: multer-s3's key runs mid-stream, before
+                // form fields appended after the file are parsed, so they'd be
+                // undefined. The filename already includes a timestamp.
+                cb(null, `recordings/${file.originalname}`);
             }
         })
     });

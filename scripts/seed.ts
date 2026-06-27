@@ -1,14 +1,15 @@
 import { prisma } from "../src/prisma.js";
 
-// levelNumber is required on ApiLevel (no default), so it must be provided.
-await prisma.apiLevel.createMany({
-  data: [
-    { name: "Beginner", levelNumber: 1 },
-    { name: "Advanced", levelNumber: 2 },
-  ],
+// Placeholder hash — replace with a real bcrypt hash once auth is wired up.
+const user = await prisma.user.upsert({
+  where: { email: "test@example.com" },
+  update: {},
+  create: {
+    email: "test@example.com",
+    name: "Test User",
+    passwordHash: "REPLACE_WITH_BCRYPT_HASH",
+  },
 });
 
-const all = await prisma.apiLevel.findMany({ orderBy: { levelNumber: "asc" } });
-console.log("seeded:", all);
-
+console.log("seeded user:", user);
 await prisma.$disconnect();
