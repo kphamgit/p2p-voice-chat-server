@@ -16,6 +16,12 @@ model User {
   createdAt    DateTime @default(now())
 }
 
+model Level {
+  id          Int    @id @default(autoincrement())
+  name        String
+  levelNumber Int    @map("level_number")
+}
+
 // Voice-chat call recordings uploaded to S3.
 model Recording {
   id           BigInt   @id @default(autoincrement())
