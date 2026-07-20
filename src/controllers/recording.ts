@@ -8,8 +8,13 @@ class RecordingController {
     // UploadToS3 (see routes/recording.ts) has already streamed the file to S3 by
     // the time this runs, so req.file carries the S3 location/key (not a buffer).
     public async create(req: Request, res: Response): Promise<void> {
+        // multer-s3 has already streamed the file to S3 before this handler runs,
+        // so `file` exists regardless of whether the DB write below succeeds.
+        const file = req.file as Express.MulterS3.File | undefined;
+        // Tracks whether the row was committed, so the catch block knows whether
+        // the S3 object is an orphan (row failed) or legitimately paired (row ok).
+        let rowCreated = false;
         try {
-            const file = req.file as Express.MulterS3.File | undefined;
             if (!file) {
                 res.status(400).send({ message: "Missing 'audio' file in upload." });
                 return;
@@ -29,6 +34,7 @@ class RecordingController {
                     remotePeerId,
                 },
             });
+            rowCreated = true;
 
             console.log(
                 `Recording saved (id ${recording.id}): ${file.location} ` +
@@ -48,6 +54,16 @@ class RecordingController {
                 remotePeerId,
             });
         } catch (err: any) {
+            // Compensating delete: if the row never committed, the S3 file (already
+            // uploaded by multer-s3) is an orphan — remove it so S3 and the DB stay
+            // in sync. If the row DID commit (e.g. presigning failed afterward),
+            // leave the file: it's correctly paired and the client can re-fetch a
+            // URL via GET /recordings/:id/url.
+            if (file?.key && !rowCreated) {
+                await UploadToS3.deleteObject(file.key).catch((e) =>
+                    console.error(`Failed to clean up orphaned S3 object ${file.key}:`, e)
+                );
+            }
             res.status(500).send({ message: err.message || 'Error saving recording.' });
         }
     }

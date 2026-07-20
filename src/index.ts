@@ -5,9 +5,13 @@ import { ExpressPeerServer } from "peer";
 import { WebSocketServer } from "ws";
 import type { ServerOptions } from "ws";
 import { createChatServer } from "./chat.js";
+import { createPresenceServer, type AuthedRequest } from "./presence.js";
+import authRoutes from "./routes/auth.js";
 import recordingRoutes from "./routes/recording.js";
 import levelRoutes from "./routes/level.js";
 import unitRoutes from "./routes/unit.js";
+import { requireAuth } from "./middleware/requireAuth.js";
+import { verifyAuthToken } from "./jwt.js";
 import { prisma } from "./prisma.js";
 
 const app = express();
@@ -22,11 +26,16 @@ const allowedOrigins = (process.env["CORS_ORIGIN"] ?? "http://localhost:5173")
 app.use(cors({ origin: allowedOrigins }));
 app.use(express.json());
 
-app.use("/levels", levelRoutes);
-app.use("/units", unitRoutes);
+// /auth is public (login/register must be reachable; /auth/me guards itself).
+app.use("/auth", authRoutes);
+
+// Everything below requires a valid `Authorization: Bearer <token>` (see
+// requireAuth). Unauthenticated requests get 401 before reaching the handlers.
+app.use("/levels", requireAuth, levelRoutes);
+app.use("/units", requireAuth, unitRoutes);
 
 // Voice-chat recording uploads + presigned playback URLs.
-app.use("/recordings", recordingRoutes);
+app.use("/recordings", requireAuth, recordingRoutes);
 
 const port = Number(process.env["PORT"]) || 3000;
 
@@ -55,13 +64,45 @@ const peerServer = ExpressPeerServer(server, {
 app.use("/myapp", peerServer);
 
 const chatWss = createChatServer();
+const presenceWss = createPresenceServer();
 
-// Single upgrade router for the whole server: "/chat" → chat, "/myapp/*" → PeerJS.
+// Single upgrade router for the whole server:
+//   "/chat"     → chat (auth-gated)
+//   "/presence" → presence/online-users (auth-gated)
+//   "/myapp/*"  → PeerJS signaling
 server.on("upgrade", (req, socket, head) => {
-  const { pathname } = new URL(req.url ?? "", "http://localhost");
-  if (pathname === "/chat") {
-    chatWss.handleUpgrade(req, socket, head, (ws) => chatWss.emit("connection", ws, req));
-  } else if (pathname.startsWith("/myapp")) {
+  const url = new URL(req.url ?? "", "http://localhost");
+  const { pathname } = url;
+
+  if (pathname === "/chat" || pathname === "/presence") {
+    // Both sockets require a valid token. Browsers can't set custom headers on a
+    // WebSocket, so it arrives as a ?token= query param. Verification is a
+    // stateless signature check (no DB), run once here — not per message.
+    const token = url.searchParams.get("token");
+    let payload;
+    try {
+      if (!token) throw new Error("missing token");
+      payload = verifyAuthToken(token);
+    } catch {
+      socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+      socket.destroy();
+      return;
+    }
+
+    if (pathname === "/chat") {
+      chatWss.handleUpgrade(req, socket, head, (ws) => chatWss.emit("connection", ws, req));
+    } else {
+      // Attach the verified identity so the presence server can trust it.
+      (req as AuthedRequest).presenceUser = {
+        userId: Number(payload.sub),
+        name: String(payload.name),
+      };
+      presenceWss.handleUpgrade(req, socket, head, (ws) => presenceWss.emit("connection", ws, req));
+    }
+    return;
+  }
+
+  if (pathname.startsWith("/myapp")) {
     peerWss.handleUpgrade(req, socket, head, (ws) => peerWss.emit("connection", ws, req));
   } else {
     socket.destroy();

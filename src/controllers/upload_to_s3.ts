@@ -4,7 +4,7 @@ import { Request } from 'express';
 import multerS3 from 'multer-s3';
 import multer from 'multer';
 
-import { S3ClientConfigType, GetObjectCommand } from '@aws-sdk/client-s3'
+import { S3ClientConfigType, GetObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3'
 import { S3Client } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
@@ -26,6 +26,13 @@ class UploadToS3 {
     getPresignedUrl = async (key: string, expiresIn = 3600): Promise<string> => {
         const command = new GetObjectCommand({ Bucket: this.bucket, Key: key });
         return getSignedUrl(this.s3, command, { expiresIn });
+    };
+
+    // Delete an object from the bucket. Used as a compensating action when a DB
+    // write fails after the file was already uploaded (keeps S3 and the DB in
+    // sync), and by any future recording-delete flow.
+    deleteObject = async (key: string): Promise<void> => {
+        await this.s3.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
     };
 
     upload = multer({
