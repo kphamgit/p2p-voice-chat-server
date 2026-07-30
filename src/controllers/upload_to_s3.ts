@@ -45,7 +45,7 @@ class UploadToS3 {
                 // Don't read req.body here: multer-s3's key runs mid-stream, before
                 // form fields appended after the file are parsed, so they'd be
                 // undefined. The filename already includes a timestamp.
-                cb(null, `recordings/${file.originalname}`);
+                cb(null, `audios/recordings/${file.originalname}`);
             }
         })
     });
