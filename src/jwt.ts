@@ -8,6 +8,7 @@ const JWT_EXPIRES_IN = 60 * 60 * 24 * 7;
 export interface AuthTokenPayload {
     sub: number;
     name: string;
+    role: string;
 }
 
 // Read the signing secret at call time so a missing value surfaces as a 500

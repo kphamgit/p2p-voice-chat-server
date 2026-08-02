@@ -5,6 +5,7 @@ import { verifyAuthToken } from '../jwt.js';
 export interface AuthUser {
     id: number;
     name: string;
+    role: string;
 }
 
 // Augment Express's Request so `req.user` is typed on protected routes.
@@ -28,7 +29,12 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
     const token = header.slice('Bearer '.length).trim();
     try {
         const payload = verifyAuthToken(token);
-        req.user = { id: Number(payload.sub), name: String(payload.name) };
+        req.user = {
+            id: Number(payload.sub),
+            name: String(payload.name),
+            // Older tokens (issued before roles existed) have no role → treat as student.
+            role: String(payload.role ?? 'student'),
+        };
         next();
     } catch {
         // Covers bad signature, malformed token, and expiry.

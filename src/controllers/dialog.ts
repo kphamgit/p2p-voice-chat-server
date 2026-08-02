@@ -6,7 +6,7 @@ class DialogController {
     // GET /dialogs — list all dialogs.
     public async findAll(_req: Request, res: Response): Promise<void> {
         try {
-            const dialogs = await prisma.dialog.findMany();
+            const dialogs = await prisma.dialog.findMany({ orderBy: { createdAt: 'desc' } });
             res.status(200).json(dialogs);
         } catch (err: any) {
             res.status(500).send({ message: err.message || 'Error retrieving dialogs.' });

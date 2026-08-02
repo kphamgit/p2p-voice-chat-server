@@ -6,10 +6,10 @@ import { signAuthToken } from '../jwt.js';
 const SALT_ROUNDS = 10;
 
 // Sign a JWT for a user and return it with a safe (hash-free) user object.
-// `name` is the login username.
-function issueToken(user: { id: number; name: string }) {
-    const token = signAuthToken({ sub: user.id, name: user.name });
-    return { token, user: { id: user.id, name: user.name } };
+// `name` is the login username; `role` drives authorization (student/teacher/admin).
+function issueToken(user: { id: number; name: string; role: string }) {
+    const token = signAuthToken({ sub: user.id, name: user.name, role: user.role });
+    return { token, user: { id: user.id, name: user.name, role: user.role } };
 }
 
 class AuthController {
@@ -71,7 +71,7 @@ class AuthController {
                 res.status(404).send({ message: 'User not found.' });
                 return;
             }
-            res.json({ id: user.id, name: user.name });
+            res.json({ id: user.id, name: user.name, role: user.role });
         } catch (err: any) {
             res.status(500).send({ message: err.message || 'Error fetching user.' });
         }

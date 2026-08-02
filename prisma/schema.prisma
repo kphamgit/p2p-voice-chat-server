@@ -7,12 +7,21 @@ datasource db {
   provider = "postgresql"
 }
 
+// Authorization role. Assigned deliberately (never chosen at registration);
+// new users default to `student`.
+enum Role {
+  student
+  teacher
+  admin
+}
+
 // Node-native user for authentication (bcrypt password hash + JWT sessions).
 // `name` is the login username: unique and required (no email).
 model User {
   id           Int      @id @default(autoincrement())
   name         String   @unique
   passwordHash String
+  role         Role     @default(student)
   createdAt    DateTime @default(now())
 }
 
