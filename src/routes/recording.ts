@@ -11,4 +11,7 @@ router.post('/', UploadToS3.upload.single('audio'), RecordingController.create);
 // Returns a temporary presigned URL to play a recording (bucket is private).
 router.get('/:id/url', RecordingController.getUrl);
 
+// Delete a recording: removes the S3 object and the DB row.
+router.delete('/:id', RecordingController.delete);
+
 export default router;

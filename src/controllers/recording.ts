@@ -84,6 +84,27 @@ class RecordingController {
             res.status(500).send({ message: err.message || 'Error generating URL.' });
         }
     }
+
+    // DELETE /recordings/:id — remove the recording from S3 and the database.
+    // S3 first, then the row: if the S3 delete fails we keep the row (and the
+    // file) so it can be retried, rather than orphaning the object.
+    public async delete(req: Request, res: Response): Promise<void> {
+        try {
+            const id = BigInt(String(req.params.id));
+            const recording = await prisma.recording.findUnique({ where: { id } });
+            if (!recording) {
+                res.status(404).send({ message: `Cannot find recording with id=${req.params.id}.` });
+                return;
+            }
+            // S3 delete is idempotent (deleting a missing key still succeeds).
+            await UploadToS3.deleteObject(recording.s3Key);
+            await prisma.recording.delete({ where: { id } });
+            console.log(`Recording deleted (id ${id}): ${recording.s3Key}`);
+            res.status(204).send();
+        } catch (err: any) {
+            res.status(500).send({ message: err.message || 'Error deleting recording.' });
+        }
+    }
 }
 
 export default new RecordingController();
