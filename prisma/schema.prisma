@@ -40,3 +40,12 @@ model Recording {
   remotePeerId String
   createdAt    DateTime @default(now())
 }
+
+// A standalone block of dialog text (e.g. a conversation script), identified
+// by a short title. Not linked to Level/Unit yet — add a relation later if needed.
+model Dialog {
+  id        Int      @id @default(autoincrement())
+  title     String
+  text      String
+  createdAt DateTime @default(now())
+}
