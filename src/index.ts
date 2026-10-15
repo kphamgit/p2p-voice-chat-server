@@ -12,9 +12,11 @@ import levelRoutes from "./routes/level.js";
 import unitRoutes from "./routes/unit.js";
 import dialogRoutes from "./routes/dialog.js";
 import lemmatizeRoutes from "./routes/lemmatize.js";
+import turnRoutes from "./routes/turn.js";
 import { requireAuth } from "./middleware/requireAuth.js";
 import { verifyAuthToken } from "./jwt.js";
 import { prisma } from "./prisma.js";
+import { getTurnIceServers, isTurnConfigured } from "./turn.js";
 
 const app = express();
 
@@ -41,6 +43,9 @@ app.use("/lemmatize", requireAuth, lemmatizeRoutes);
 // Voice-chat recording uploads + presigned playback URLs.
 app.use("/recordings", requireAuth, recordingRoutes);
 
+// Short-lived Metered TURN credentials for voice calls (secret key stays here).
+app.use("/turn-credentials", requireAuth, turnRoutes);
+
 const port = Number(process.env["PORT"]) || 3000;
 
 const server = app.listen(port, () => {
@@ -52,6 +57,16 @@ prisma
   .$connect()
   .then(() => console.log("✅ Database connection successful"))
   .catch((err) => console.error("❌ Database connection failed:", err));
+
+// Create the first TURN credential at startup: Metered needs up to 2 minutes to
+// propagate a new one, so warming it now means it's live before the first call.
+if (isTurnConfigured()) {
+  getTurnIceServers()
+    .then(() => console.log("✅ TURN credential ready"))
+    .catch((err) => console.error("❌ TURN credential warm-up failed (will retry on request):", err));
+} else {
+  console.warn("⚠️ METERED_APP_NAME / METERED_SECRET_KEY not set — TURN disabled, calls use direct connections only");
+}
 
 // PeerJS and chat both need WebSockets on this one HTTP server. To stop the two
 // ws servers from fighting over the "upgrade" event, we put BOTH in `noServer`
