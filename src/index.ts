@@ -11,6 +11,7 @@ import recordingRoutes from "./routes/recording.js";
 import levelRoutes from "./routes/level.js";
 import unitRoutes from "./routes/unit.js";
 import dialogRoutes from "./routes/dialog.js";
+import lemmatizeRoutes from "./routes/lemmatize.js";
 import { requireAuth } from "./middleware/requireAuth.js";
 import { verifyAuthToken } from "./jwt.js";
 import { prisma } from "./prisma.js";
@@ -35,6 +36,7 @@ app.use("/auth", authRoutes);
 app.use("/levels", requireAuth, levelRoutes);
 app.use("/units", requireAuth, unitRoutes);
 app.use("/dialogs", requireAuth, dialogRoutes);
+app.use("/lemmatize", requireAuth, lemmatizeRoutes);
 
 // Voice-chat recording uploads + presigned playback URLs.
 app.use("/recordings", requireAuth, recordingRoutes);

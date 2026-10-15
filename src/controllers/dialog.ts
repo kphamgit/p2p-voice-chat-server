@@ -1,6 +1,13 @@
 import { Request, Response } from 'express';
 import { prisma } from '../prisma.js';
 
+type DialogBody = { title?: string; text?: string; note?: string | null; dialogNumber?: unknown };
+
+// A dialog number must be a positive integer. Returns an error message, or null if valid.
+function invalidDialogNumber(value: unknown): string | null {
+    return Number.isInteger(value) && (value as number) > 0 ? null : 'dialogNumber must be a positive integer.';
+}
+
 class DialogController {
 
     // GET /dialogs — list all dialogs.
@@ -13,15 +20,24 @@ class DialogController {
         }
     }
 
-    // POST /dialogs — create a dialog from { title, text }.
+    // POST /dialogs — create a dialog from { title, text, note?, dialogNumber? }.
+    // dialogNumber defaults to the total number of dialogs including this one.
     public async create(req: Request, res: Response): Promise<void> {
         try {
-            const { title, text } = req.body as { title?: string; text?: string };
+            const { title, text, note, dialogNumber } = req.body as DialogBody;
             if (!title || !text) {
                 res.status(400).send({ message: 'title and text are required.' });
                 return;
             }
-            const dialog = await prisma.dialog.create({ data: { title, text } });
+            if (dialogNumber !== undefined) {
+                const error = invalidDialogNumber(dialogNumber);
+                if (error) {
+                    res.status(400).send({ message: error });
+                    return;
+                }
+            }
+            const number = (dialogNumber as number | undefined) ?? (await prisma.dialog.count()) + 1;
+            const dialog = await prisma.dialog.create({ data: { title, text, note, dialogNumber: number } });
             res.status(201).json(dialog);
         } catch (err: any) {
             res.status(500).send({ message: err.message || 'Error creating dialog.' });
@@ -43,14 +59,22 @@ class DialogController {
         }
     }
 
-    // PUT /dialogs/:id — update title and/or text.
+    // PUT /dialogs/:id — update title, text, note and/or dialogNumber.
     public async update(req: Request, res: Response): Promise<void> {
         try {
             const id = Number(req.params.id);
-            const { title, text } = req.body as { title?: string; text?: string };
+            const { title, text, note, dialogNumber } = req.body as DialogBody;
+            if (dialogNumber !== undefined) {
+                const error = invalidDialogNumber(dialogNumber);
+                if (error) {
+                    res.status(400).send({ message: error });
+                    return;
+                }
+            }
             const dialog = await prisma.dialog.update({
                 where: { id },
-                data: { title, text }, // undefined fields are left unchanged
+                // undefined fields are left unchanged
+                data: { title, text, note, dialogNumber: dialogNumber as number | undefined },
             });
             res.json(dialog);
         } catch (err: any) {
