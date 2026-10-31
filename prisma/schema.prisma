@@ -8,10 +8,9 @@ datasource db {
 }
 
 // Authorization role. Assigned deliberately (never chosen at registration);
-// new users default to `student`.
+// new users default to `student`. `admin` can create/edit/delete dialogs.
 enum Role {
   student
-  teacher
   admin
 }
 
@@ -29,6 +28,7 @@ model Level {
   id          Int    @id @default(autoincrement())
   name        String
   levelNumber Int    @map("level_number")
+  description String? // optional free-form description of the level
   units       Unit[] // back-relation: one Level has many Units (no DB column)
 }
 
@@ -57,6 +57,16 @@ model Dialog {
   title        String
   text         String
   note         String?  // optional free-form note about the dialog
-  dialogNumber Int      @map("dialog_number") // teacher-assigned ordering number
+  dialogNumber Int      @map("dialog_number") // admin-assigned ordering number
   createdAt    DateTime @default(now())
+}
+
+// Metered TURN credentials this server created (see src/turn.ts). Persisted so a
+// restart reuses the live credential instead of minting a new one (the free plan
+// caps how many can exist), and so expired ones can be deleted from Metered later.
+model TurnCredential {
+  username   String   @id // Metered identifies credentials by username (used to delete)
+  iceServers Json     // what clients receive: TURN URLs + username/password
+  createdAt  DateTime @default(now())
+  expiresAt  DateTime
 }

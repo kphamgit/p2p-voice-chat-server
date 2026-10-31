@@ -13,7 +13,9 @@ import unitRoutes from "./routes/unit.js";
 import dialogRoutes from "./routes/dialog.js";
 import lemmatizeRoutes from "./routes/lemmatize.js";
 import turnRoutes from "./routes/turn.js";
+import userRoutes from "./routes/user.js";
 import { requireAuth } from "./middleware/requireAuth.js";
+import { mountRoutes, printRoutes } from "./listRoutes.js";
 import { verifyAuthToken } from "./jwt.js";
 import { prisma } from "./prisma.js";
 import { getTurnIceServers, isTurnConfigured } from "./turn.js";
@@ -31,25 +33,27 @@ app.use(cors({ origin: allowedOrigins }));
 app.use(express.json());
 
 // /auth is public (login/register must be reachable; /auth/me guards itself).
-app.use("/auth", authRoutes);
+mountRoutes(app, "/auth", authRoutes);
 
 // Everything below requires a valid `Authorization: Bearer <token>` (see
 // requireAuth). Unauthenticated requests get 401 before reaching the handlers.
-app.use("/levels", requireAuth, levelRoutes);
-app.use("/units", requireAuth, unitRoutes);
-app.use("/dialogs", requireAuth, dialogRoutes);
-app.use("/lemmatize", requireAuth, lemmatizeRoutes);
+mountRoutes(app, "/levels", requireAuth, levelRoutes);
+mountRoutes(app, "/units", requireAuth, unitRoutes);
+mountRoutes(app, "/dialogs", requireAuth, dialogRoutes);
+mountRoutes(app, "/lemmatize", requireAuth, lemmatizeRoutes);
+mountRoutes(app, "/users", requireAuth, userRoutes);
 
 // Voice-chat recording uploads + presigned playback URLs.
-app.use("/recordings", requireAuth, recordingRoutes);
+mountRoutes(app, "/recordings", requireAuth, recordingRoutes);
 
 // Short-lived Metered TURN credentials for voice calls (secret key stays here).
-app.use("/turn-credentials", requireAuth, turnRoutes);
+mountRoutes(app, "/turn-credentials", requireAuth, turnRoutes);
 
 const port = Number(process.env["PORT"]) || 3000;
 
 const server = app.listen(port, () => {
   console.log(`✅ Server listening on port ${port}`);
+  printRoutes();
 });
 
 // Verify the database connection on startup (Prisma connects lazily otherwise).
@@ -58,8 +62,9 @@ prisma
   .then(() => console.log("✅ Database connection successful"))
   .catch((err) => console.error("❌ Database connection failed:", err));
 
-// Create the first TURN credential at startup: Metered needs up to 2 minutes to
-// propagate a new one, so warming it now means it's live before the first call.
+// Load (or, if none is saved, create) the TURN credential at startup: Metered
+// needs up to 2 minutes to propagate a new one, so warming it now means it's
+// live before the first call.
 if (isTurnConfigured()) {
   getTurnIceServers()
     .then(() => console.log("✅ TURN credential ready"))

@@ -6,7 +6,7 @@ import { signAuthToken } from '../jwt.js';
 const SALT_ROUNDS = 10;
 
 // Sign a JWT for a user and return it with a safe (hash-free) user object.
-// `name` is the login username; `role` drives authorization (student/teacher/admin).
+// `name` is the login username; `role` drives authorization (student/admin).
 function issueToken(user: { id: number; name: string; role: string }) {
     const token = signAuthToken({ sub: user.id, name: user.name, role: user.role });
     return { token, user: { id: user.id, name: user.name, role: user.role } };

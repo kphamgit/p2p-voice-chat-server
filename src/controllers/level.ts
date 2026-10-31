@@ -12,15 +12,15 @@ class LevelController {
         }
     }
 
-    // POST /levels — create a level from { name, levelNumber }.
+    // POST /levels — create a level from { name, levelNumber, description? }.
     public async create(req: Request, res: Response): Promise<void> {
         try {
-            const { name, levelNumber } = req.body as { name?: string; levelNumber?: number };
+            const { name, levelNumber, description } = req.body as { name?: string; levelNumber?: number; description?: string };
             if (!name || levelNumber == null) {
                 res.status(400).send({ message: 'name and levelNumber are required.' });
                 return;
             }
-            const level = await prisma.level.create({ data: { name, levelNumber } });
+            const level = await prisma.level.create({ data: { name, levelNumber, description } });
             res.status(201).json(level);
         } catch (err: any) {
             res.status(500).send({ message: err.message || 'Error creating level.' });
@@ -60,14 +60,14 @@ class LevelController {
         }
     }
 
-    // PUT /levels/:id — update name and/or levelNumber.
+    // PUT /levels/:id — update name, levelNumber and/or description.
     public async update(req: Request, res: Response): Promise<void> {
         try {
             const id = Number(req.params.id);
-            const { name, levelNumber } = req.body as { name?: string; levelNumber?: number };
+            const { name, levelNumber, description } = req.body as { name?: string; levelNumber?: number; description?: string };
             const level = await prisma.level.update({
                 where: { id },
-                data: { name, levelNumber }, // undefined fields are left unchanged
+                data: { name, levelNumber, description }, // undefined fields are left unchanged
             });
             res.json(level);
         } catch (err: any) {

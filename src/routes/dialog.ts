@@ -9,9 +9,9 @@ import { requireRole } from '../middleware/requireRole.js';
 router.get('/', DialogController.findAll);
 router.get('/:id', DialogController.findOne);
 
-// Writes require the teacher role.
-router.post('/', requireRole('teacher'), DialogController.create);
-router.put('/:id', requireRole('teacher'), DialogController.update);
-router.delete('/:id', requireRole('teacher'), DialogController.delete);
+// Writes require the admin role.
+router.post('/', requireRole('admin'), DialogController.create);
+router.put('/:id', requireRole('admin'), DialogController.update);
+router.delete('/:id', requireRole('admin'), DialogController.delete);
 
 export default router;
