@@ -10,6 +10,8 @@ import authRoutes from "./routes/auth.js";
 import recordingRoutes from "./routes/recording.js";
 import levelRoutes from "./routes/level.js";
 import unitRoutes from "./routes/unit.js";
+import itemGroupRoutes from "./routes/itemGroup.js";
+import questionItemRoutes from "./routes/questionItem.js";
 import dialogRoutes from "./routes/dialog.js";
 import lemmatizeRoutes from "./routes/lemmatize.js";
 import turnRoutes from "./routes/turn.js";
@@ -39,6 +41,8 @@ mountRoutes(app, "/auth", authRoutes);
 // requireAuth). Unauthenticated requests get 401 before reaching the handlers.
 mountRoutes(app, "/levels", requireAuth, levelRoutes);
 mountRoutes(app, "/units", requireAuth, unitRoutes);
+mountRoutes(app, "/item-groups", requireAuth, itemGroupRoutes);
+mountRoutes(app, "/question-items", requireAuth, questionItemRoutes);
 mountRoutes(app, "/dialogs", requireAuth, dialogRoutes);
 mountRoutes(app, "/lemmatize", requireAuth, lemmatizeRoutes);
 mountRoutes(app, "/users", requireAuth, userRoutes);

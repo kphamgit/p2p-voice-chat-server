@@ -25,19 +25,50 @@ model User {
 }
 
 model Level {
-  id          Int    @id @default(autoincrement())
+  id          Int     @id @default(autoincrement())
   name        String
-  levelNumber Int    @map("level_number")
+  levelNumber Int     @map("level_number")
   description String? // optional free-form description of the level
   units       Unit[] // back-relation: one Level has many Units (no DB column)
 }
 
 model Unit {
-  id         Int    @id @default(autoincrement())
-  name       String
-  unitNumber Int    @map("unit_number")
-  levelId    Int    @map("level_id") // FK column → Level.id
-  level      Level  @relation(fields: [levelId], references: [id])
+  id          Int         @id @default(autoincrement())
+  name        String
+  unitNumber  Int         @map("unit_number")
+  description String? // optional free-form description of the unit
+  lecture     String? // optional lecture content for the unit
+  levelId     Int         @map("level_id") // FK column → Level.id
+  level       Level       @relation(fields: [levelId], references: [id])
+  itemGroups  ItemGroup[] // back-relation: one Unit has many ItemGroups (no DB column)
+}
+
+// What kind of items an ItemGroup holds.
+enum ItemType {
+  text
+  question
+}
+
+model ItemGroup {
+  id              Int            @id @default(autoincrement())
+  itemGroupNumber Int            @map("item_group_number")
+  description     String? // optional free-form description of the item group
+  displayType     String?        @map("display_type") // optional: how the group's items are displayed
+  itemType        ItemType?      @map("item_type") // what kind of items the group holds
+  unitId          Int            @map("unit_id") // FK column → Unit.id
+  unit            Unit           @relation(fields: [unitId], references: [id])
+  questionItems   QuestionItem[] // back-relation: one ItemGroup has many QuestionItems (no DB column)
+}
+
+model QuestionItem {
+  id             Int       @id @default(autoincrement())
+  itemNumber     Int       @map("item_number")
+  questionText   String?   @map("question_text") // the question
+  questionPrompt String?   @map("question_prompt") // optional prompt/instruction shown with the question
+  answerKey      String?   @map("answer_key") // the correct answer
+  choices        String? // answer options, if the question has any
+  itemGroupId    Int       @map("item_group_id") // FK column → ItemGroup.id
+  itemGroup      ItemGroup @relation(fields: [itemGroupId], references: [id])
 }
 
 // Voice-chat call recordings uploaded to S3.
@@ -56,7 +87,7 @@ model Dialog {
   id           Int      @id @default(autoincrement())
   title        String
   text         String
-  note         String?  // optional free-form note about the dialog
+  note         String? // optional free-form note about the dialog
   dialogNumber Int      @map("dialog_number") // admin-assigned ordering number
   createdAt    DateTime @default(now())
 }
@@ -66,7 +97,7 @@ model Dialog {
 // caps how many can exist), and so expired ones can be deleted from Metered later.
 model TurnCredential {
   username   String   @id // Metered identifies credentials by username (used to delete)
-  iceServers Json     // what clients receive: TURN URLs + username/password
+  iceServers Json // what clients receive: TURN URLs + username/password
   createdAt  DateTime @default(now())
   expiresAt  DateTime
 }

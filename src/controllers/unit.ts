@@ -12,19 +12,21 @@ class UnitController {
         }
     }
 
-    // POST /units — create a unit from { name, unitNumber, levelId }.
+    // POST /units — create a unit from { name, unitNumber, levelId, description?, lecture? }.
     public async create(req: Request, res: Response): Promise<void> {
         try {
-            const { name, unitNumber, levelId } = req.body as {
+            const { name, unitNumber, levelId, description, lecture } = req.body as {
                 name?: string;
                 unitNumber?: number;
                 levelId?: number;
+                description?: string;
+                lecture?: string;
             };
             if (!name || unitNumber == null || levelId == null) {
                 res.status(400).send({ message: 'name, unitNumber, and levelId are required.' });
                 return;
             }
-            const unit = await prisma.unit.create({ data: { name, unitNumber, levelId } });
+            const unit = await prisma.unit.create({ data: { name, unitNumber, levelId, description, lecture } });
             res.status(201).json(unit);
         } catch (err: any) {
             if (err?.code === 'P2003') {
@@ -32,6 +34,30 @@ class UnitController {
                 return;
             }
             res.status(500).send({ message: err.message || 'Error creating unit.' });
+        }
+    }
+
+    // GET /units/:id/item-groups — list the item groups belonging to a unit,
+    // each with _count.questionItems (how many question items it has).
+    public async findItemGroups(req: Request, res: Response): Promise<void> {
+        try {
+            const id = Number(req.params.id);
+            const unit = await prisma.unit.findUnique({
+                where: { id },
+                include: {
+                    itemGroups: {
+                        orderBy: { itemGroupNumber: 'asc' },
+                        include: { _count: { select: { questionItems: true } } },
+                    },
+                },
+            });
+            if (!unit) {
+                res.status(404).send({ message: `Unit ${req.params.id} not found.` });
+                return;
+            }
+            res.json(unit.itemGroups);
+        } catch (err: any) {
+            res.status(500).send({ message: err.message || 'Error retrieving item groups.' });
         }
     }
 
@@ -50,18 +76,20 @@ class UnitController {
         }
     }
 
-    // PUT /units/:id — update name, unitNumber, and/or levelId.
+    // PUT /units/:id — update name, unitNumber, levelId, description, and/or lecture.
     public async update(req: Request, res: Response): Promise<void> {
         try {
             const id = Number(req.params.id);
-            const { name, unitNumber, levelId } = req.body as {
+            const { name, unitNumber, levelId, description, lecture } = req.body as {
                 name?: string;
                 unitNumber?: number;
                 levelId?: number;
+                description?: string;
+                lecture?: string;
             };
             const unit = await prisma.unit.update({
                 where: { id },
-                data: { name, unitNumber, levelId }, // undefined fields are left unchanged
+                data: { name, unitNumber, levelId, description, lecture }, // undefined fields are left unchanged
             });
             res.json(unit);
         } catch (err: any) {

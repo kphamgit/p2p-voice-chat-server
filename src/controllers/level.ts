@@ -27,13 +27,19 @@ class LevelController {
         }
     }
 
-    // GET /levels/:id/units — list the units belonging to a level.
+    // GET /levels/:id/units — list the units belonging to a level,
+    // each with _count.itemGroups (how many item groups it has).
     public async findUnits(req: Request, res: Response): Promise<void> {
         try {
             const id = Number(req.params.id);
             const level = await prisma.level.findUnique({
                 where: { id },
-                include: { units: { orderBy: { unitNumber: 'asc' } } },
+                include: {
+                    units: {
+                        orderBy: { unitNumber: 'asc' },
+                        include: { _count: { select: { itemGroups: true } } },
+                    },
+                },
             });
             if (!level) {
                 res.status(404).send({ message: `Level ${req.params.id} not found.` });

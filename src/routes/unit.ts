@@ -5,6 +5,7 @@ const router = Router();
 
 router.get('/', UnitController.findAll);
 router.post('/', UnitController.create);
+router.get('/:id/item-groups', UnitController.findItemGroups);
 router.get('/:id', UnitController.findOne);
 router.put('/:id', UnitController.update);
 router.delete('/:id', UnitController.delete);
