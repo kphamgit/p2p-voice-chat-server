@@ -21,6 +21,7 @@ import { mountRoutes, printRoutes } from "./listRoutes.js";
 import { verifyAuthToken } from "./jwt.js";
 import { prisma } from "./prisma.js";
 import { getTurnIceServers, isTurnConfigured } from "./turn.js";
+import { deleteStalePendingImages } from "./media.js";
 
 const app = express();
 
@@ -76,6 +77,15 @@ if (isTurnConfigured()) {
 } else {
   console.warn("⚠️ METERED_APP_NAME / METERED_SECRET_KEY not set — TURN disabled, calls use direct connections only");
 }
+
+// Delete images pasted into new question items that were never saved (they
+// wait in S3's pending folder for a day). Runs at startup and every 6 hours;
+// unref() so the timer never keeps the process alive on shutdown.
+function sweepPendingImages() {
+  deleteStalePendingImages().catch((err) => console.error("❌ Pending image cleanup failed (will retry):", err));
+}
+sweepPendingImages();
+setInterval(sweepPendingImages, 6 * 60 * 60 * 1000).unref();
 
 // PeerJS and chat both need WebSockets on this one HTTP server. To stop the two
 // ws servers from fighting over the "upgrade" event, we put BOTH in `noServer`

@@ -3,6 +3,8 @@ import { prisma } from '../prisma.js';
 
 const ITEM_TYPES = ['text', 'question'] as const;
 type ItemType = (typeof ITEM_TYPES)[number];
+const DISPLAY_TYPES = ['scrolling', 'individual_screen'] as const;
+type ItemDisplayType = (typeof DISPLAY_TYPES)[number];
 
 class ItemGroupController {
     // GET /item-groups — list all item groups, ordered by itemGroupNumber.
@@ -22,11 +24,15 @@ class ItemGroupController {
                 itemGroupNumber?: number;
                 unitId?: number;
                 description?: string;
-                displayType?: string;
+                displayType?: ItemDisplayType | null;
                 itemType?: ItemType | null;
             };
             if (itemType != null && !ITEM_TYPES.includes(itemType)) {
                 res.status(400).send({ message: `itemType must be one of: ${ITEM_TYPES.join(', ')}.` });
+                return;
+            }
+            if (displayType != null && !DISPLAY_TYPES.includes(displayType)) {
+                res.status(400).send({ message: `displayType must be one of: ${DISPLAY_TYPES.join(', ')}.` });
                 return;
             }
             if (itemGroupNumber == null || unitId == null) {
@@ -85,11 +91,15 @@ class ItemGroupController {
                 itemGroupNumber?: number;
                 unitId?: number;
                 description?: string;
-                displayType?: string;
+                displayType?: ItemDisplayType | null;
                 itemType?: ItemType | null;
             };
             if (itemType != null && !ITEM_TYPES.includes(itemType)) {
                 res.status(400).send({ message: `itemType must be one of: ${ITEM_TYPES.join(', ')}.` });
+                return;
+            }
+            if (displayType != null && !DISPLAY_TYPES.includes(displayType)) {
+                res.status(400).send({ message: `displayType must be one of: ${DISPLAY_TYPES.join(', ')}.` });
                 return;
             }
             const itemGroup = await prisma.itemGroup.update({
