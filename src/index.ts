@@ -22,6 +22,7 @@ import { verifyAuthToken } from "./jwt.js";
 import { prisma } from "./prisma.js";
 import { getTurnIceServers, isTurnConfigured } from "./turn.js";
 import { deleteStalePendingImages } from "./media.js";
+import { deleteOldRefreshTokens } from "./refreshTokens.js";
 
 const app = express();
 
@@ -86,6 +87,13 @@ function sweepPendingImages() {
 }
 sweepPendingImages();
 setInterval(sweepPendingImages, 6 * 60 * 60 * 1000).unref();
+
+// Delete expired refresh tokens (and long-revoked ones) once a day.
+function sweepRefreshTokens() {
+  deleteOldRefreshTokens().catch((err) => console.error("❌ Refresh token cleanup failed (will retry):", err));
+}
+sweepRefreshTokens();
+setInterval(sweepRefreshTokens, 24 * 60 * 60 * 1000).unref();
 
 // PeerJS and chat both need WebSockets on this one HTTP server. To stop the two
 // ws servers from fighting over the "upgrade" event, we put BOTH in `noServer`

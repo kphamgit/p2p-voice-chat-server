@@ -1,8 +1,13 @@
 import jwt from 'jsonwebtoken';
 
-// Token lifetime in seconds (7 days). Numeric form avoids the StringValue
-// typing pitfall in @types/jsonwebtoken's `expiresIn`.
-const JWT_EXPIRES_IN = 60 * 60 * 24 * 7;
+// Token lifetimes in seconds. Numeric form avoids the StringValue typing
+// pitfall in @types/jsonwebtoken's `expiresIn`.
+//
+// A sign-in without a refresh token (the admin and web client apps) gets a
+// 7-day token. The student app asks for a refresh token too (see
+// src/refreshTokens.ts), so its access tokens can be short: 15 minutes.
+export const JWT_EXPIRES_IN = 60 * 60 * 24 * 7;
+export const ACCESS_TOKEN_EXPIRES_IN = 15 * 60;
 
 // Claims we put in (and read back out of) auth tokens.
 export interface AuthTokenPayload {
@@ -21,8 +26,8 @@ export function getJwtSecret(): string {
     return secret;
 }
 
-export function signAuthToken(payload: AuthTokenPayload): string {
-    return jwt.sign(payload, getJwtSecret(), { expiresIn: JWT_EXPIRES_IN });
+export function signAuthToken(payload: AuthTokenPayload, expiresIn: number = JWT_EXPIRES_IN): string {
+    return jwt.sign(payload, getJwtSecret(), { expiresIn });
 }
 
 // Verify a token's signature and expiry, returning its decoded claims.

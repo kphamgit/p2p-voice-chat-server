@@ -17,11 +17,31 @@ enum Role {
 // Node-native user for authentication (bcrypt password hash + JWT sessions).
 // `name` is the login username: unique and required (no email).
 model User {
-  id           Int      @id @default(autoincrement())
-  name         String   @unique
-  passwordHash String
-  role         Role     @default(student)
-  createdAt    DateTime @default(now())
+  id            Int            @id @default(autoincrement())
+  name          String         @unique
+  passwordHash  String
+  role          Role           @default(student)
+  createdAt     DateTime       @default(now())
+  refreshTokens RefreshToken[]
+}
+
+// A device's long-lived sign-in for the student app (see src/refreshTokens.ts).
+// Only a hash of the token is stored. Each refresh marks the token used and
+// issues a new one in the same family (one family per sign-in on a device);
+// reusing an already-used token revokes the whole family.
+model RefreshToken {
+  id        Int       @id @default(autoincrement())
+  userId    Int       @map("user_id")
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  tokenHash String    @unique @map("token_hash")
+  familyId  String    @map("family_id")
+  expiresAt DateTime  @map("expires_at")
+  createdAt DateTime  @default(now()) @map("created_at")
+  usedAt    DateTime? @map("used_at")
+  revokedAt DateTime? @map("revoked_at")
+
+  @@index([familyId])
+  @@index([userId])
 }
 
 model Level {
