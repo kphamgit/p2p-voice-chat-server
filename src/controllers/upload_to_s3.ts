@@ -12,6 +12,7 @@ import {
     DeleteObjectsCommand,
     CopyObjectCommand,
     ListObjectsV2Command,
+    PutObjectCommand,
 } from '@aws-sdk/client-s3'
 import { S3Client } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
@@ -43,10 +44,11 @@ class UploadToS3 {
         await this.s3.send(new DeleteObjectCommand({ Bucket: this.bucket, Key: key }));
     };
 
-    // --- Public images (question item media) ---------------------------------
-    // Everything under images/ is meant to be publicly readable (a bucket policy
-    // grants s3:GetObject on images/*), so clients load these by plain URL;
-    // recordings under audios/ stay private and use presigned URLs.
+    // --- Public files (item images and question audio) ------------------------
+    // Everything under images/ and question-audios/ is meant to be publicly
+    // readable (a bucket policy grants s3:GetObject on both), so clients load
+    // these by plain URL; recordings under audios/ stay private and use
+    // presigned URLs.
 
     publicBaseUrl = `https://${this.bucket}.s3.${this.config.region}.amazonaws.com/`;
 
@@ -92,6 +94,20 @@ class UploadToS3 {
         }
     };
 
+    // Store a file we made on the server (e.g. generated speech). Keys are
+    // never reused, so it may be cached forever.
+    putObject = async (key: string, body: Buffer, contentType: string): Promise<void> => {
+        await this.s3.send(
+            new PutObjectCommand({
+                Bucket: this.bucket,
+                Key: key,
+                Body: body,
+                ContentType: contentType,
+                CacheControl: 'public, max-age=31536000, immutable',
+            }),
+        );
+    };
+
     copyObject = async (fromKey: string, toKey: string): Promise<void> => {
         await this.s3.send(
             new CopyObjectCommand({
@@ -110,14 +126,14 @@ class UploadToS3 {
         'image/webp': 'webp',
     };
 
-    // Upload middleware for one question item image (multipart field "image").
-    // Saved as images/question-items/<item id>/<random>.<ext>: the item id never
-    // changes, and the random name avoids clashes (pasted images are all
+    // Upload middleware for one item image (multipart field "image") in
+    // `folder`, e.g. images/question-items/<item id>/<random>.<ext>: the item id
+    // never changes, and the random name avoids clashes (pasted images are all
     // "image.png"). Names are never reused, so browsers may cache them forever.
     // Without an :id in the route (an item not saved yet), the image goes to
-    // images/question-items/pending/ and moves to the item's folder when the
-    // item is saved (see media.ts).
-    imageUpload = multer({
+    // the folder's pending/ and moves to the item's folder when the item is
+    // saved (see media.ts).
+    imageUploadTo = (folder: ImageFolder) => multer({
         limits: { fileSize: 5 * 1024 * 1024 }, // 5 MB cap
         fileFilter: (_req, file, cb) => {
             if (UploadToS3.IMAGE_EXTENSIONS[file.mimetype]) {
@@ -133,7 +149,7 @@ class UploadToS3 {
             cacheControl: 'public, max-age=31536000, immutable',
             key: (req: Request, file, cb) => {
                 const ext = UploadToS3.IMAGE_EXTENSIONS[file.mimetype];
-                const prefix = req.params.id ? questionItemImagePrefix(Number(req.params.id)) : PENDING_IMAGE_PREFIX;
+                const prefix = req.params.id ? folder.item(Number(req.params.id)) : folder.pending;
                 cb(null, `${prefix}${randomUUID()}.${ext}`);
             },
         }),
@@ -155,13 +171,38 @@ class UploadToS3 {
     });
 };
 
-// Images pasted into an item that hasn't been saved yet.
-export const PENDING_IMAGE_PREFIX = 'images/question-items/pending/';
+// Where one kind of item keeps its images (see media.ts). Each kind has its
+// own folder because question item and text item ids overlap: question item 5
+// and text item 5 must not share images/…/5/.
+export interface ImageFolder {
+    kind: string; // for log messages, e.g. "question item"
+    pending: string; // images pasted into an item that hasn't been saved yet
+    // An item's own images. Ends with "/" so item 4's prefix doesn't also
+    // match item 42's images.
+    item: (itemId: number) => string;
+}
 
-// Where a question item's images live. Ends with "/" so item 4's prefix
-// doesn't also match item 42's images.
-export function questionItemImagePrefix(itemId: number): string {
-    return `images/question-items/${itemId}/`;
+export const QUESTION_ITEM_IMAGES: ImageFolder = {
+    kind: 'question item',
+    pending: 'images/question-items/pending/',
+    item: (itemId) => `images/question-items/${itemId}/`,
+};
+
+export const TEXT_ITEM_IMAGES: ImageFolder = {
+    kind: 'text item',
+    pending: 'images/text-items/pending/',
+    item: (itemId) => `images/text-items/${itemId}/`,
+};
+
+export const IMAGE_FOLDERS = [QUESTION_ITEM_IMAGES, TEXT_ITEM_IMAGES];
+
+// Question audio (generated speech), public like images: the bucket policy
+// grants s3:GetObject on question-audios/*. Voices generated in the item form
+// wait in pending/ until the item is saved (see questionAudio.ts).
+export const PENDING_AUDIO_PREFIX = 'question-audios/pending/';
+
+export function questionItemAudioPrefix(itemId: number): string {
+    return `question-audios/${itemId}/`;
 }
 
 export default new UploadToS3();

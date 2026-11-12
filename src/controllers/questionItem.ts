@@ -1,7 +1,9 @@
 import { NextFunction, Request, Response } from 'express';
 import { prisma } from '../prisma.js';
-import UploadToS3 from './upload_to_s3.js';
+import UploadToS3, { QUESTION_ITEM_IMAGES } from './upload_to_s3.js';
 import { adoptPendingImages, copyImages, deleteAllImages, deleteUnusedImages } from '../media.js';
+import { adoptPendingAudio, copyAudio, deleteUnusedAudio, generateQuestionAudio, isAllowedAudio } from '../questionAudio.js';
+import { isTtsProvider, TtsInputError } from '../tts.js';
 
 interface ItemBody {
     itemNumber?: number;
@@ -11,6 +13,9 @@ interface ItemBody {
     choices?: string | null;
     format?: number; // required in the DB; omit on create to get the default (1)
     media?: string | null; // text with inline images, ![](<public S3 URL>)
+    audio?: string | null; // public S3 URL of the question's MP3 (see questionAudio.ts)
+    audioText?: string | null; // the text the audio speaks
+    voiceName?: string | null; // the id of the voice that speaks it (mostly ElevenLabs)
     explanation?: string | null;
     showExplanationWhenCorrect?: boolean; // default false
     itemGroupId?: number;
@@ -22,7 +27,7 @@ function invalidFormat(format: unknown): boolean {
     return format !== undefined && !Number.isInteger(format);
 }
 
-// For optional text fields (media, explanation): text, null, or omitted.
+// For optional text fields (media, audioText, voiceName, explanation): text, null, or omitted.
 function invalidOptionalText(value: unknown): boolean {
     return value !== undefined && value !== null && typeof value !== 'string';
 }
@@ -31,7 +36,7 @@ function invalidOptionalText(value: unknown): boolean {
 // the item existed) into its folder, save the media pointing at them, then
 // delete the pending originals. Returns the item as finally saved.
 async function savePendingImages<T extends { id: number; media: string | null }>(item: T): Promise<T> {
-    const { media, adoptedKeys } = await adoptPendingImages(item.id, item.media);
+    const { media, adoptedKeys } = await adoptPendingImages(QUESTION_ITEM_IMAGES, item.id, item.media);
     if (adoptedKeys.length === 0) return item;
     await prisma.questionItem.update({ where: { id: item.id }, data: { media } });
     UploadToS3.deleteKeys(adoptedKeys).catch((err) =>
@@ -40,12 +45,29 @@ async function savePendingImages<T extends { id: number; media: string | null }>
     return { ...item, media };
 }
 
-// The 500 message when the item saved but its pasted images couldn't be moved.
-// The text still points at the pending copies (kept for a day), so saving the
-// item again from Edit retries the move.
-function pendingImagesFailed(itemId: number, verb: string, err: any): string {
-    console.error(`❌ Moving pending images of question item ${itemId} failed:`, err);
-    return `Question item ${itemId} was ${verb}, but its pasted images couldn't be stored (${err.message}). Open it with Edit and save again.`;
+// Likewise for a voice generated before saving: move it from pending into the
+// item's folder and save the URL of the moved copy.
+async function savePendingAudio<T extends { id: number; audio: string | null }>(item: T): Promise<T> {
+    const { audio, adoptedKey } = await adoptPendingAudio(item.id, item.audio);
+    if (!adoptedKey) return item;
+    await prisma.questionItem.update({ where: { id: item.id }, data: { audio } });
+    UploadToS3.deleteKeys([adoptedKey]).catch((err) =>
+        console.error(`❌ Deleting moved pending audio of question item ${item.id} failed:`, err),
+    );
+    return { ...item, audio };
+}
+
+// Both of the above, after saving an item.
+async function savePendingFiles<T extends { id: number; media: string | null; audio: string | null }>(item: T): Promise<T> {
+    return savePendingAudio(await savePendingImages(item));
+}
+
+// The 500 message when the item saved but its pasted images or generated voice
+// couldn't be moved. The item still points at the pending copies (kept for a
+// day), so saving the item again from Edit retries the move.
+function pendingFilesFailed(itemId: number, verb: string, err: any): string {
+    console.error(`❌ Moving pending files of question item ${itemId} failed:`, err);
+    return `Question item ${itemId} was ${verb}, but its pasted images or voice couldn't be stored (${err.message}). Open it with Edit and save again.`;
 }
 
 class QuestionItemController {
@@ -60,16 +82,24 @@ class QuestionItemController {
     }
 
     // POST /question-items — create a question item from
-    // { itemNumber, itemGroupId, questionText?, questionPrompt?, answerKey?, choices?, format? (default 1), media?, explanation?, showExplanationWhenCorrect? }.
+    // { itemNumber, itemGroupId, questionText?, questionPrompt?, answerKey?, choices?, format? (default 1), media?, audio?, audioText?, voiceName?, explanation?, showExplanationWhenCorrect? }.
     public async create(req: Request, res: Response): Promise<void> {
         try {
-            const { itemNumber, questionText, questionPrompt, answerKey, choices, format, media, explanation, showExplanationWhenCorrect, itemGroupId } = req.body as ItemBody;
+            const { itemNumber, questionText, questionPrompt, answerKey, choices, format, media, audio, audioText, voiceName, explanation, showExplanationWhenCorrect, itemGroupId } = req.body as ItemBody;
             if (invalidFormat(format)) {
                 res.status(400).send({ message: 'format must be a whole number.' });
                 return;
             }
             if (invalidOptionalText(media)) {
                 res.status(400).send({ message: 'media must be text.' });
+                return;
+            }
+            if (invalidOptionalText(audioText)) {
+                res.status(400).send({ message: 'audioText must be text.' });
+                return;
+            }
+            if (invalidOptionalText(voiceName)) {
+                res.status(400).send({ message: 'voiceName must be text.' });
                 return;
             }
             if (invalidOptionalText(explanation)) {
@@ -80,18 +110,22 @@ class QuestionItemController {
                 res.status(400).send({ message: 'showExplanationWhenCorrect must be true or false.' });
                 return;
             }
+            if (audio !== undefined && !isAllowedAudio(audio)) {
+                res.status(400).send({ message: 'audio must be a voice generated in the item form, or null.' });
+                return;
+            }
             if (itemNumber == null || itemGroupId == null) {
                 res.status(400).send({ message: 'itemNumber and itemGroupId are required.' });
                 return;
             }
             const created = await prisma.questionItem.create({
-                data: { itemNumber, questionText, questionPrompt, answerKey, choices, format, media, explanation, showExplanationWhenCorrect, itemGroupId },
+                data: { itemNumber, questionText, questionPrompt, answerKey, choices, format, media, audio, audioText, voiceName, explanation, showExplanationWhenCorrect, itemGroupId },
             });
             let item;
             try {
-                item = await savePendingImages(created);
+                item = await savePendingFiles(created);
             } catch (err: any) {
-                res.status(500).send({ message: pendingImagesFailed(created.id, 'created', err) });
+                res.status(500).send({ message: pendingFilesFailed(created.id, 'created', err) });
                 return;
             }
             res.status(201).json(item);
@@ -129,20 +163,23 @@ class QuestionItemController {
                         choices: source.choices,
                         format: source.format,
                         explanation: source.explanation,
+                        audioText: source.audioText,
+                        voiceName: source.voiceName,
                         showExplanationWhenCorrect: source.showExplanationWhenCorrect,
-                        // media is filled in below, once its images are copied.
+                        // media and audio are filled in below, once their files are copied.
                         itemGroupId: source.itemGroupId,
                     },
                 });
             });
-            if (source.media) {
+            if (source.media || source.audio) {
                 try {
-                    const media = await copyImages(source.media, source.id, copy.id);
-                    res.status(201).json(await prisma.questionItem.update({ where: { id: copy.id }, data: { media } }));
+                    const media = await copyImages(QUESTION_ITEM_IMAGES, source.media, source.id, copy.id);
+                    const audio = await copyAudio(source.audio, source.id, copy.id);
+                    res.status(201).json(await prisma.questionItem.update({ where: { id: copy.id }, data: { media, audio } }));
                 } catch (err: any) {
-                    console.error(`❌ Copying images of question item ${source.id} failed:`, err);
+                    console.error(`❌ Copying files of question item ${source.id} failed:`, err);
                     res.status(500).send({
-                        message: `Question item ${copy.id} was cloned without its media: copying the images failed (${err.message}).`,
+                        message: `Question item ${copy.id} was cloned without its media and audio: copying the files failed (${err.message}).`,
                     });
                 }
                 return;
@@ -169,17 +206,26 @@ class QuestionItemController {
     }
 
     // PUT /question-items/:id — update any of itemNumber, questionText, questionPrompt, answerKey, choices, format,
-    // media, explanation, showExplanationWhenCorrect, itemGroupId. Saving media also deletes the item's images it no longer uses.
+    // media, audio, audioText, voiceName, explanation, showExplanationWhenCorrect, itemGroupId. Saving media (or audio) also deletes the item's
+    // images (or audio files) it no longer uses.
     public async update(req: Request, res: Response): Promise<void> {
         try {
             const id = Number(req.params.id);
-            const { itemNumber, questionText, questionPrompt, answerKey, choices, format, media, explanation, showExplanationWhenCorrect, itemGroupId } = req.body as ItemBody;
+            const { itemNumber, questionText, questionPrompt, answerKey, choices, format, media, audio, audioText, voiceName, explanation, showExplanationWhenCorrect, itemGroupId } = req.body as ItemBody;
             if (invalidFormat(format)) {
                 res.status(400).send({ message: 'format must be a whole number.' });
                 return;
             }
             if (invalidOptionalText(media)) {
                 res.status(400).send({ message: 'media must be text.' });
+                return;
+            }
+            if (invalidOptionalText(audioText)) {
+                res.status(400).send({ message: 'audioText must be text.' });
+                return;
+            }
+            if (invalidOptionalText(voiceName)) {
+                res.status(400).send({ message: 'voiceName must be text.' });
                 return;
             }
             if (invalidOptionalText(explanation)) {
@@ -190,23 +236,33 @@ class QuestionItemController {
                 res.status(400).send({ message: 'showExplanationWhenCorrect must be true or false.' });
                 return;
             }
+            if (audio !== undefined && !isAllowedAudio(audio, id)) {
+                res.status(400).send({ message: 'audio must be a voice generated in the item form, or null.' });
+                return;
+            }
             let item = await prisma.questionItem.update({
                 where: { id },
-                data: { itemNumber, questionText, questionPrompt, answerKey, choices, format, media, explanation, showExplanationWhenCorrect, itemGroupId }, // undefined fields are left unchanged
+                data: { itemNumber, questionText, questionPrompt, answerKey, choices, format, media, audio, audioText, voiceName, explanation, showExplanationWhenCorrect, itemGroupId }, // undefined fields are left unchanged
             });
-            if (media !== undefined) {
+            if (media !== undefined || audio !== undefined) {
                 try {
-                    item = await savePendingImages(item);
+                    item = await savePendingFiles(item);
                 } catch (err: any) {
-                    res.status(500).send({ message: pendingImagesFailed(id, 'saved', err) });
+                    res.status(500).send({ message: pendingFilesFailed(id, 'saved', err) });
                     return;
                 }
             }
             res.json(item);
+            if (audio !== undefined) {
+                // Best effort, after responding, like the images below.
+                deleteUnusedAudio(id, item.audio).catch((err) =>
+                    console.error(`❌ Cleaning up audio of question item ${id} failed:`, err),
+                );
+            }
             if (media !== undefined) {
                 // Best effort, after responding: a leftover image costs a little
                 // storage; the next save of the media tries again.
-                deleteUnusedImages(id, item.media).catch((err) =>
+                deleteUnusedImages(QUESTION_ITEM_IMAGES, id, item.media).catch((err) =>
                     console.error(`❌ Cleaning up images of question item ${id} failed:`, err),
                 );
             }
@@ -223,14 +279,17 @@ class QuestionItemController {
         }
     }
 
-    // DELETE /question-items/:id — remove a question item and its images.
+    // DELETE /question-items/:id — remove a question item and its images and audio.
     public async delete(req: Request, res: Response): Promise<void> {
         try {
             const id = Number(req.params.id);
             await prisma.questionItem.delete({ where: { id } });
             res.status(204).send();
-            deleteAllImages(id).catch((err) =>
+            deleteAllImages(QUESTION_ITEM_IMAGES, id).catch((err) =>
                 console.error(`❌ Deleting images of deleted question item ${id} failed:`, err),
+            );
+            deleteUnusedAudio(id, null).catch((err) =>
+                console.error(`❌ Deleting audio of deleted question item ${id} failed:`, err),
             );
         } catch (err: any) {
             if (err?.code === 'P2025') {
@@ -255,18 +314,40 @@ class QuestionItemController {
         }
     }
 
-    // POST /question-items/:id/images, or POST /question-items/images for an
-    // item not saved yet — the image (multipart field "image") has already been
-    // stored in S3 by UploadToS3.imageUpload; return its public URL for the
-    // client to put into the item's media as ![](<url>). It only stays if the
-    // media that uses it is saved (see deleteUnusedImages and media.ts).
-    public async uploadImage(req: Request, res: Response): Promise<void> {
-        const file = req.file as (Express.Multer.File & { key?: string }) | undefined;
-        if (!file?.key) {
-            res.status(400).send({ message: 'Send the image as multipart form field "image".' });
+    // POST /question-items/audio — speak { text, provider?, voice?, rate? }
+    // (provider: google, the default, or elevenlabs; see tts.ts), store the MP3 in S3's pending folder and return
+    // { url }. The form plays it; saving the item with audio: url keeps it (and
+    // moves it into the item's folder), otherwise it's deleted after a day.
+    public async generateAudio(req: Request, res: Response): Promise<void> {
+        const { text, provider = 'google', voice, rate } = (req.body ?? {}) as {
+            text?: unknown;
+            provider?: unknown;
+            voice?: unknown;
+            rate?: unknown;
+        };
+        if (typeof text !== 'string' || (voice !== undefined && typeof voice !== 'string')) {
+            res.status(400).send({ message: 'Send { text, provider?, voice?, rate? } with text and voice as strings.' });
             return;
         }
-        res.status(201).json({ url: UploadToS3.publicUrl(file.key) });
+        if (!isTtsProvider(provider)) {
+            res.status(400).send({ message: 'provider must be google or elevenlabs.' });
+            return;
+        }
+        try {
+            const url = await generateQuestionAudio(text.trim(), {
+                provider,
+                rate: rate === undefined ? undefined : Number(rate),
+                voice: voice || undefined,
+            });
+            res.status(201).json({ url });
+        } catch (err: any) {
+            if (err instanceof TtsInputError) {
+                res.status(400).send({ message: err.message });
+                return;
+            }
+            console.error('❌ Generating question audio failed:', err);
+            res.status(502).send({ message: `Generating the voice failed: ${err.message}` });
+        }
     }
 }
 

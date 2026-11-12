@@ -6,3 +6,6 @@ node_modules
 
 # Compiled output
 dist
+
+# Google service account key (local only; Heroku uses GOOGLE_TTS_CREDENTIALS_JSON)
+google_tts_service_account.json

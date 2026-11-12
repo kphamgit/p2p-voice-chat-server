@@ -12,9 +12,11 @@ import levelRoutes from "./routes/level.js";
 import unitRoutes from "./routes/unit.js";
 import itemGroupRoutes from "./routes/itemGroup.js";
 import questionItemRoutes from "./routes/questionItem.js";
+import textItemRoutes from "./routes/textItem.js";
 import dialogRoutes from "./routes/dialog.js";
 import lemmatizeRoutes from "./routes/lemmatize.js";
 import turnRoutes from "./routes/turn.js";
+import ttsRoutes from "./routes/tts.js";
 import userRoutes from "./routes/user.js";
 import { requireAuth } from "./middleware/requireAuth.js";
 import { mountRoutes, printRoutes } from "./listRoutes.js";
@@ -22,6 +24,7 @@ import { verifyAuthToken } from "./jwt.js";
 import { prisma } from "./prisma.js";
 import { getTurnIceServers, isTurnConfigured } from "./turn.js";
 import { deleteStalePendingImages } from "./media.js";
+import { deleteStalePendingAudio } from "./questionAudio.js";
 import { deleteOldRefreshTokens } from "./refreshTokens.js";
 
 const app = express();
@@ -45,6 +48,7 @@ mountRoutes(app, "/levels", requireAuth, levelRoutes);
 mountRoutes(app, "/units", requireAuth, unitRoutes);
 mountRoutes(app, "/item-groups", requireAuth, itemGroupRoutes);
 mountRoutes(app, "/question-items", requireAuth, questionItemRoutes);
+mountRoutes(app, "/text-items", requireAuth, textItemRoutes);
 mountRoutes(app, "/dialogs", requireAuth, dialogRoutes);
 mountRoutes(app, "/lemmatize", requireAuth, lemmatizeRoutes);
 mountRoutes(app, "/users", requireAuth, userRoutes);
@@ -54,6 +58,9 @@ mountRoutes(app, "/recordings", requireAuth, recordingRoutes);
 
 // Short-lived Metered TURN credentials for voice calls (secret key stays here).
 mountRoutes(app, "/turn-credentials", requireAuth, turnRoutes);
+
+// Google text-to-speech (auth-gated: every request is billed).
+mountRoutes(app, "/tts", requireAuth, ttsRoutes);
 
 const port = Number(process.env["PORT"]) || 3000;
 
@@ -79,11 +86,12 @@ if (isTurnConfigured()) {
   console.warn("⚠️ METERED_APP_NAME / METERED_SECRET_KEY not set — TURN disabled, calls use direct connections only");
 }
 
-// Delete images pasted into new question items that were never saved (they
-// wait in S3's pending folder for a day). Runs at startup and every 6 hours;
+// Delete images pasted into, and voices generated in, item forms that were
+// never saved (they wait in S3's pending folders for a day). Runs at startup and every 6 hours;
 // unref() so the timer never keeps the process alive on shutdown.
 function sweepPendingImages() {
   deleteStalePendingImages().catch((err) => console.error("❌ Pending image cleanup failed (will retry):", err));
+  deleteStalePendingAudio().catch((err) => console.error("❌ Pending audio cleanup failed (will retry):", err));
 }
 sweepPendingImages();
 setInterval(sweepPendingImages, 6 * 60 * 60 * 1000).unref();

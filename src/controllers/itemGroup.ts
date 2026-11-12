@@ -68,6 +68,24 @@ class ItemGroupController {
         }
     }
 
+    // GET /item-groups/:id/text-items — list the text items belonging to an item group.
+    public async findTextItems(req: Request, res: Response): Promise<void> {
+        try {
+            const id = Number(req.params.id);
+            const itemGroup = await prisma.itemGroup.findUnique({
+                where: { id },
+                include: { textItems: { orderBy: { itemNumber: 'asc' } } },
+            });
+            if (!itemGroup) {
+                res.status(404).send({ message: `Item group ${req.params.id} not found.` });
+                return;
+            }
+            res.json(itemGroup.textItems);
+        } catch (err: any) {
+            res.status(500).send({ message: err.message || 'Error retrieving text items.' });
+        }
+    }
+
     // GET /item-groups/:id — fetch one item group (with its parent unit).
     public async findOne(req: Request, res: Response): Promise<void> {
         try {

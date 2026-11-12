@@ -84,6 +84,7 @@ model ItemGroup {
   unitId          Int              @map("unit_id") // FK column → Unit.id
   unit            Unit             @relation(fields: [unitId], references: [id])
   questionItems   QuestionItem[] // back-relation: one ItemGroup has many QuestionItems (no DB column)
+  textItems       TextItem[] // back-relation: one ItemGroup has many TextItems (no DB column)
 }
 
 model QuestionItem {
@@ -96,9 +97,23 @@ model QuestionItem {
   format                     Int       @default(1) // which question format/layout to use
   explanation                String? // optional: why the answer is correct, shown to the student
   showExplanationWhenCorrect Boolean   @default(false) @map("show_explanation_when_correct") // also show the explanation after a correct answer (by default only after a wrong one)
-  media                      String? // optional text with inline media, e.g. images as ![](<public S3 URL>)
+  media                      String? // optional text with inline media, e.g. images as ![](<public S3 URL>) (the question's audio is in `audio`)
+  audio                      String? // optional: public S3 URL of the question's MP3, under question-audios/<item id>/
+  audioText                  String?   @map("audio_text") // the text the audio speaks (kept so the voice can be regenerated from it)
+  voiceName                  String?   @map("voice_name") // the voice that spoke the audio; mostly ElevenLabs voices (the preferred TTS engine), e.g. River, sometimes Google, e.g. en-US-Chirp3-HD-Charon
   itemGroupId                Int       @map("item_group_id") // FK column → ItemGroup.id
   itemGroup                  ItemGroup @relation(fields: [itemGroupId], references: [id])
+}
+
+// A block of text in an item group (e.g. a reading passage or a note), shown
+// in order by itemNumber.
+model TextItem {
+  id          Int       @id @default(autoincrement())
+  itemNumber  Int       @map("item_number")
+  content     String // the text
+  media       String? // optional text with inline media, e.g. images as ![](<public S3 URL>)
+  itemGroupId Int       @map("item_group_id") // FK column → ItemGroup.id
+  itemGroup   ItemGroup @relation(fields: [itemGroupId], references: [id])
 }
 
 // Voice-chat call recordings uploaded to S3.

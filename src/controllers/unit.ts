@@ -38,7 +38,8 @@ class UnitController {
     }
 
     // GET /units/:id/item-groups — list the item groups belonging to a unit,
-    // each with _count.questionItems (how many question items it has).
+    // each with _count.questionItems and _count.textItems (how many items of
+    // each kind it has; a group holds one kind, per its itemType).
     public async findItemGroups(req: Request, res: Response): Promise<void> {
         try {
             const id = Number(req.params.id);
@@ -47,7 +48,7 @@ class UnitController {
                 include: {
                     itemGroups: {
                         orderBy: { itemGroupNumber: 'asc' },
-                        include: { _count: { select: { questionItems: true } } },
+                        include: { _count: { select: { questionItems: true, textItems: true } } },
                     },
                 },
             });
