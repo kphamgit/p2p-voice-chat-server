@@ -18,6 +18,7 @@ interface ItemBody {
     voiceName?: string | null; // the id of the voice that speaks it (mostly ElevenLabs)
     explanation?: string | null;
     showExplanationWhenCorrect?: boolean; // default false
+    checkOrder?: boolean; // default false; only applies to question format 8
     itemGroupId?: number;
 }
 
@@ -82,10 +83,10 @@ class QuestionItemController {
     }
 
     // POST /question-items — create a question item from
-    // { itemNumber, itemGroupId, questionText?, questionPrompt?, answerKey?, choices?, format? (default 1), media?, audio?, audioText?, voiceName?, explanation?, showExplanationWhenCorrect? }.
+    // { itemNumber, itemGroupId, questionText?, questionPrompt?, answerKey?, choices?, format? (default 1), media?, audio?, audioText?, voiceName?, explanation?, showExplanationWhenCorrect?, checkOrder? }.
     public async create(req: Request, res: Response): Promise<void> {
         try {
-            const { itemNumber, questionText, questionPrompt, answerKey, choices, format, media, audio, audioText, voiceName, explanation, showExplanationWhenCorrect, itemGroupId } = req.body as ItemBody;
+            const { itemNumber, questionText, questionPrompt, answerKey, choices, format, media, audio, audioText, voiceName, explanation, showExplanationWhenCorrect, checkOrder, itemGroupId } = req.body as ItemBody;
             if (invalidFormat(format)) {
                 res.status(400).send({ message: 'format must be a whole number.' });
                 return;
@@ -110,6 +111,10 @@ class QuestionItemController {
                 res.status(400).send({ message: 'showExplanationWhenCorrect must be true or false.' });
                 return;
             }
+            if (checkOrder !== undefined && typeof checkOrder !== 'boolean') {
+                res.status(400).send({ message: 'checkOrder must be true or false.' });
+                return;
+            }
             if (audio !== undefined && !isAllowedAudio(audio)) {
                 res.status(400).send({ message: 'audio must be a voice generated in the item form, or null.' });
                 return;
@@ -119,7 +124,7 @@ class QuestionItemController {
                 return;
             }
             const created = await prisma.questionItem.create({
-                data: { itemNumber, questionText, questionPrompt, answerKey, choices, format, media, audio, audioText, voiceName, explanation, showExplanationWhenCorrect, itemGroupId },
+                data: { itemNumber, questionText, questionPrompt, answerKey, choices, format, media, audio, audioText, voiceName, explanation, showExplanationWhenCorrect, checkOrder, itemGroupId },
             });
             let item;
             try {
@@ -166,6 +171,7 @@ class QuestionItemController {
                         audioText: source.audioText,
                         voiceName: source.voiceName,
                         showExplanationWhenCorrect: source.showExplanationWhenCorrect,
+                        checkOrder: source.checkOrder,
                         // media and audio are filled in below, once their files are copied.
                         itemGroupId: source.itemGroupId,
                     },
@@ -206,12 +212,12 @@ class QuestionItemController {
     }
 
     // PUT /question-items/:id — update any of itemNumber, questionText, questionPrompt, answerKey, choices, format,
-    // media, audio, audioText, voiceName, explanation, showExplanationWhenCorrect, itemGroupId. Saving media (or audio) also deletes the item's
+    // media, audio, audioText, voiceName, explanation, showExplanationWhenCorrect, checkOrder, itemGroupId. Saving media (or audio) also deletes the item's
     // images (or audio files) it no longer uses.
     public async update(req: Request, res: Response): Promise<void> {
         try {
             const id = Number(req.params.id);
-            const { itemNumber, questionText, questionPrompt, answerKey, choices, format, media, audio, audioText, voiceName, explanation, showExplanationWhenCorrect, itemGroupId } = req.body as ItemBody;
+            const { itemNumber, questionText, questionPrompt, answerKey, choices, format, media, audio, audioText, voiceName, explanation, showExplanationWhenCorrect, checkOrder, itemGroupId } = req.body as ItemBody;
             if (invalidFormat(format)) {
                 res.status(400).send({ message: 'format must be a whole number.' });
                 return;
@@ -236,13 +242,17 @@ class QuestionItemController {
                 res.status(400).send({ message: 'showExplanationWhenCorrect must be true or false.' });
                 return;
             }
+            if (checkOrder !== undefined && typeof checkOrder !== 'boolean') {
+                res.status(400).send({ message: 'checkOrder must be true or false.' });
+                return;
+            }
             if (audio !== undefined && !isAllowedAudio(audio, id)) {
                 res.status(400).send({ message: 'audio must be a voice generated in the item form, or null.' });
                 return;
             }
             let item = await prisma.questionItem.update({
                 where: { id },
-                data: { itemNumber, questionText, questionPrompt, answerKey, choices, format, media, audio, audioText, voiceName, explanation, showExplanationWhenCorrect, itemGroupId }, // undefined fields are left unchanged
+                data: { itemNumber, questionText, questionPrompt, answerKey, choices, format, media, audio, audioText, voiceName, explanation, showExplanationWhenCorrect, checkOrder, itemGroupId }, // undefined fields are left unchanged
             });
             if (media !== undefined || audio !== undefined) {
                 try {

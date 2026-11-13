@@ -11,7 +11,8 @@
 		"start": "node dist/src/index.js",
 		"prisma:generate": "prisma generate",
 		"migrate": "prisma migrate dev",
-		"postinstall": "prisma generate"
+		"postinstall": "prisma generate",
+		"sync:dictionary": "tsx scripts/sync-dictionary.ts"
 	},
 	"dependencies": {
 		"@aws-sdk/client-s3": "^3.1075.0",

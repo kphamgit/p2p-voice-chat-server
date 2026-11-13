@@ -101,6 +101,7 @@ model QuestionItem {
   audio                      String? // optional: public S3 URL of the question's MP3, under question-audios/<item id>/
   audioText                  String?   @map("audio_text") // the text the audio speaks (kept so the voice can be regenerated from it)
   voiceName                  String?   @map("voice_name") // the voice that spoke the audio; mostly ElevenLabs voices (the preferred TTS engine), e.g. River, sometimes Google, e.g. en-US-Chirp3-HD-Charon
+  checkOrder                 Boolean   @default(false) @map("check_order") // only applies to question format 8
   itemGroupId                Int       @map("item_group_id") // FK column → ItemGroup.id
   itemGroup                  ItemGroup @relation(fields: [itemGroupId], references: [id])
 }
@@ -145,4 +146,75 @@ model TurnCredential {
   iceServers Json // what clients receive: TURN URLs + username/password
   createdAt  DateTime @default(now())
   expiresAt  DateTime
+}
+
+// ── Dictionary ──────────────────────────────────────────────────────────────
+// Copied from the Django app's api/models.py (DictEntry, PartOfSpeech, Sense,
+// Idiom, Example). Varchar lengths match Django's CharField max_length; Django
+// TextFields are plain text. Deleting a row deletes its children, as Django's
+// on_delete=CASCADE does.
+
+// A dictionary headword from one source.
+model DictEntry {
+  id             Int            @id @default(autoincrement())
+  headWord       String         @map("head_word") @db.VarChar(100)
+  hyphenated     String         @default("") @db.VarChar(100) // e.g. "dic-tion-ary"
+  source         String?        @db.VarChar(60) // e.g. "longman", "ho-ngoc-duc-stardict"
+  partOfSpeeches PartOfSpeech[]
+
+  @@unique([headWord, source])
+}
+
+// One part of speech of an entry (e.g. noun, verb), with its pronunciations.
+model PartOfSpeech {
+  id                      Int       @id @default(autoincrement())
+  dictEntryId             Int       @map("dict_entry_id") // FK column → DictEntry.id
+  dictEntry               DictEntry @relation(fields: [dictEntryId], references: [id], onDelete: Cascade)
+  name                    String    @db.VarChar(50)
+  pronCode                String?   @map("pron_code") @db.VarChar(50) // British pronunciation code
+  amevarPron              String?   @map("amevar_pron") @db.VarChar(50) // American variant pronunciation code
+  vietPronCode            String?   @map("viet_pron_code") @db.VarChar(255) // Vietnamese pronunciation (JSON array); the American/flapped form (T -> đ)
+  vietPronCodeStandard    String?   @map("viet_pron_code_standard") @db.VarChar(255) // Vietnamese pronunciation (JSON array); the standard/non-flapped form (keeps t)
+  vietPronRegionalVariant String    @default("") @map("viet_pron_regional_variant") @db.VarChar(255) // regional variant note
+  frequency               String?   @db.VarChar(20)
+  grammar                 String?   @db.VarChar(100)
+  videoUrl                String?   @map("video_url")
+  audioBlob               String    @default("") @map("audio_blob") @db.VarChar(255) // name (without ".mp3") of the pronunciation audio; "" means no audio yet
+  senses                  Sense[]
+  idioms                  Idiom[]
+}
+
+// One meaning of a part of speech.
+model Sense {
+  id             Int          @id @default(autoincrement())
+  posId          Int          @map("pos_id") // FK column → PartOfSpeech.id
+  pos            PartOfSpeech @relation(fields: [posId], references: [id], onDelete: Cascade)
+  senseNumber    Int          @default(0) @map("sense_number") @db.SmallInt
+  definition     String?
+  defTranslation String?      @map("def_translation")
+  crossReference String?      @map("cross_reference") @db.VarChar(400) // e.g. "be rewarded (with something)/be-rewarded-with-something" (title/head_word)
+  grammar        String?      @db.VarChar(80)
+  relatedWords   String?      @map("related_words") @db.VarChar(200) // e.g. "run, running, ran"
+  examples       Example[]
+}
+
+// An idiom under a part of speech.
+model Idiom {
+  id          Int          @id @default(autoincrement())
+  posId       Int          @map("pos_id") // FK column → PartOfSpeech.id
+  pos         PartOfSpeech @relation(fields: [posId], references: [id], onDelete: Cascade)
+  phrase      String?
+  translation String?
+}
+
+// An example sentence for a sense.
+model Example {
+  id              Int     @id @default(autoincrement())
+  senseId         Int     @map("sense_id") // FK column → Sense.id
+  sense           Sense   @relation(fields: [senseId], references: [id], onDelete: Cascade)
+  exampleNumber   Int     @default(0) @map("example_number") @db.SmallInt
+  difficultyLevel Int     @default(0) @map("difficulty_level") @db.SmallInt // e.g. 0 for easy … 5 for hard
+  sentence        String?
+  translation     String?
+  grammarPoint    String? @map("grammar_point") @db.VarChar(100) // e.g. "be rewarded (with something)"
 }
