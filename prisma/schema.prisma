@@ -107,6 +107,7 @@ model QuestionItem {
   trailingAudioText          String?   @map("trailing_audio_text") // the text the trailing audio speaks
   trailingVoiceName          String?   @map("trailing_voice_name") // the voice that spoke the trailing audio (same kind of id as voiceName)
   checkOrder                 Boolean   @default(false) @map("check_order") // only applies to question format 8
+  halfHandsFree              Boolean   @default(false) @map("half_hands_free") // only applies to question format 7: the student app starts the microphone by itself once the question's audio ends (the student still taps to stop)
   itemGroupId                Int       @map("item_group_id") // FK column → ItemGroup.id
   itemGroup                  ItemGroup @relation(fields: [itemGroupId], references: [id])
 }
