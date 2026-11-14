@@ -18,6 +18,7 @@ import lemmatizeRoutes from "./routes/lemmatize.js";
 import turnRoutes from "./routes/turn.js";
 import ttsRoutes from "./routes/tts.js";
 import dictionaryRoutes from "./routes/dictionary.js";
+import cardRoutes from "./routes/card.js";
 import userRoutes from "./routes/user.js";
 import { requireAuth } from "./middleware/requireAuth.js";
 import { mountRoutes, printRoutes } from "./listRoutes.js";
@@ -63,6 +64,7 @@ mountRoutes(app, "/turn-credentials", requireAuth, turnRoutes);
 // Google text-to-speech (auth-gated: every request is billed).
 mountRoutes(app, "/tts", requireAuth, ttsRoutes);
 mountRoutes(app, "/dictionary", requireAuth, dictionaryRoutes);
+mountRoutes(app, "/cards", requireAuth, cardRoutes);
 
 const port = Number(process.env["PORT"]) || 3000;
 

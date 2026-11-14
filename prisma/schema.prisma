@@ -23,6 +23,8 @@ model User {
   role          Role           @default(student)
   createdAt     DateTime       @default(now())
   refreshTokens RefreshToken[]
+  cardReviews   CardReview[]
+  reviewLogs    ReviewLog[]
 }
 
 // A device's long-lived sign-in for the student app (see src/refreshTokens.ts).
@@ -101,6 +103,9 @@ model QuestionItem {
   audio                      String? // optional: public S3 URL of the question's MP3, under question-audios/<item id>/
   audioText                  String?   @map("audio_text") // the text the audio speaks (kept so the voice can be regenerated from it)
   voiceName                  String?   @map("voice_name") // the voice that spoke the audio; mostly ElevenLabs voices (the preferred TTS engine), e.g. River, sometimes Google, e.g. en-US-Chirp3-HD-Charon
+  trailingAudio              String?   @map("trailing_audio") // optional second MP3 (public S3 URL, under question-audios/<item id>/ like `audio`)
+  trailingAudioText          String?   @map("trailing_audio_text") // the text the trailing audio speaks
+  trailingVoiceName          String?   @map("trailing_voice_name") // the voice that spoke the trailing audio (same kind of id as voiceName)
   checkOrder                 Boolean   @default(false) @map("check_order") // only applies to question format 8
   itemGroupId                Int       @map("item_group_id") // FK column → ItemGroup.id
   itemGroup                  ItemGroup @relation(fields: [itemGroupId], references: [id])
@@ -196,6 +201,7 @@ model Sense {
   grammar        String?      @db.VarChar(80)
   relatedWords   String?      @map("related_words") @db.VarChar(200) // e.g. "run, running, ran"
   examples       Example[]
+  cards          Card[] // cards made from this sense
 }
 
 // An idiom under a part of speech.
@@ -217,4 +223,68 @@ model Example {
   sentence        String?
   translation     String?
   grammarPoint    String? @map("grammar_point") @db.VarChar(100) // e.g. "be rewarded (with something)"
+}
+
+// ── Vocabulary review ───────────────────────────────────────────────────────
+// Copied from the Django app's api/models.py (Card, CardReview, ReviewLog).
+
+// A vocabulary card, shared by all users: front = text, back = definition.
+// One per word; each user's spaced-repetition schedule for it is a CardReview.
+model Card {
+  id           Int          @id @default(autoincrement())
+  text         String       @db.VarChar(200)
+  definition   String       @default("") // back of the card
+  partOfSpeech String       @default("") @map("part_of_speech") @db.VarChar(50) // e.g. "verb", "noun"
+  difficulty   Int          @default(0) @db.SmallInt
+  // The dictionary sense the card was made from, if any (null for cards made
+  // outside the dictionary). Used to tell whether a sense already has a card,
+  // which still works after the definition is edited. Deleting the sense
+  // keeps the card and clears this.
+  senseId      Int?         @map("sense_id") // FK column → Sense.id
+  sense        Sense?       @relation(fields: [senseId], references: [id], onDelete: SetNull)
+  reviews      CardReview[]
+  reviewLogs   ReviewLog[]
+
+  @@index([senseId])
+}
+
+// One user's SM-2 schedule for a card, created on their first review of it.
+model CardReview {
+  id           Int       @id @default(autoincrement())
+  userId       Int       @map("user_id") // FK column → User.id
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  cardId       Int       @map("card_id") // FK column → Card.id
+  card         Card      @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  easiness     Float     @default(2.5)
+  interval     Int       @default(0) // days until the next review
+  repetitions  Int       @default(0)
+  nextReviewAt DateTime? @map("next_review_at")
+
+  @@unique([userId, cardId])
+  @@index([cardId])
+}
+
+// One answer in the vocabulary review (multiple choice), including practice
+// repeats of missed cards.
+model ReviewLog {
+  id               Int      @id @default(autoincrement())
+  userId           Int      @map("user_id") // FK column → User.id
+  user             User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  cardId           Int      @map("card_id") // FK column → Card.id
+  card             Card     @relation(fields: [cardId], references: [id], onDelete: Cascade)
+  answeredAt       DateTime @default(now()) @map("answered_at")
+  result           String   @db.VarChar(20) // "correct", "wrong", "dont_know" (I don't know) or "timeout" (timed out)
+  chosenDefinition String   @default("") @map("chosen_definition") // the wrong option picked, if any
+  latencyMs        Int      @map("latency_ms") // from showing the options to the answer (measured by the app)
+  quality          Int      @db.SmallInt // SM-2 grade, 0..5
+  graded           Boolean // false = practice (the card was already graded that day)
+  // The card's schedule right after this answer (a practice answer doesn't change it).
+  intervalDays     Int      @map("interval_days")
+  easiness         Float
+  // The time limits when answering, so old rows still make sense if they're changed.
+  timeLimitMs      Int      @map("time_limit_ms")
+  fastAnswerMs     Int      @map("fast_answer_ms")
+
+  @@index([userId, answeredAt(sort: Desc)])
+  @@index([cardId])
 }

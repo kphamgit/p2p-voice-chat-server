@@ -29,6 +29,8 @@ export default class DictionaryController {
     // match, ignoring case) with their parts of speech, senses (and examples)
     // and idioms in order. From one source if `source` is given (e.g.
     // "ho-ngoc-duc-stardict"), otherwise from every source.
+    // Each sense also says whether a review card exists for it (`cardId`, or
+    // null) and whether the signed-in user has that card in their review (`inReview`).
     static async lookup(req: Request, res: Response): Promise<void> {
         const word = typeof req.query['word'] === 'string' ? req.query['word'].trim() : '';
         if (!word) {
@@ -52,6 +54,27 @@ export default class DictionaryController {
                 },
             },
         });
-        res.json(entries);
+
+        const senseIds = entries.flatMap((e) => e.partOfSpeeches.flatMap((p) => p.senses.map((s) => s.id)));
+        const cards = await prisma.card.findMany({
+            where: { senseId: { in: senseIds } },
+            select: { id: true, senseId: true, reviews: { where: { userId: req.user!.id }, select: { id: true } } },
+            orderBy: { id: 'asc' },
+        });
+        const cardFor = new Map<number, number>(); // sense id → its (first) card's id
+        const inReview = new Set<number>(); // sense ids with a card in this user's review
+        for (const card of cards) {
+            if (!cardFor.has(card.senseId!)) cardFor.set(card.senseId!, card.id);
+            if (card.reviews.length) inReview.add(card.senseId!);
+        }
+        res.json(
+            entries.map((e) => ({
+                ...e,
+                partOfSpeeches: e.partOfSpeeches.map((p) => ({
+                    ...p,
+                    senses: p.senses.map((s) => ({ ...s, cardId: cardFor.get(s.id) ?? null, inReview: inReview.has(s.id) })),
+                })),
+            })),
+        );
     }
 }

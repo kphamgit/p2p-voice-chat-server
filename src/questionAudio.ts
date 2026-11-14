@@ -1,5 +1,6 @@
-// Keeps a question item's audio (an MP3 of generated speech) in S3 in step
-// with its `audio` field, the way media.ts does for images.
+// Keeps a question item's audio (MP3s of generated speech) in S3 in step
+// with its `audio` and `trailingAudio` fields, the way media.ts does for
+// images. Both live in the item's one folder, question-audios/<item id>/.
 //
 // The admin's item form generates a voice (generateQuestionAudio), which is
 // stored under question-audios/pending/ so it can be heard and regenerated
@@ -48,11 +49,12 @@ export async function adoptPendingAudio(
     return { audio: UploadToS3.publicUrl(toKey), adoptedKey: key };
 }
 
-// Delete the item's audio files other than `audio` (all of them for null),
-// e.g. the one a regenerated voice replaced. Run after saving the item.
-export async function deleteUnusedAudio(itemId: number, audio: string | null): Promise<void> {
-    const used = audio ? UploadToS3.keyFromPublicUrl(audio) : null;
-    const unused = (await UploadToS3.listKeys(questionItemAudioPrefix(itemId))).filter((key) => key !== used);
+// Delete the item's audio files other than those in `keep` (its saved audio
+// and trailing audio; all of them for []), e.g. the one a regenerated voice
+// replaced. Run after saving the item.
+export async function deleteUnusedAudio(itemId: number, keep: (string | null)[]): Promise<void> {
+    const used = new Set(keep.map((url) => (url ? UploadToS3.keyFromPublicUrl(url) : null)).filter(Boolean));
+    const unused = (await UploadToS3.listKeys(questionItemAudioPrefix(itemId))).filter((key) => !used.has(key));
     if (unused.length) {
         await UploadToS3.deleteKeys(unused);
         console.log(`🧹 Deleted ${unused.length} unused audio file(s) of question item ${itemId}`);
