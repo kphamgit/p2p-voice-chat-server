@@ -58,20 +58,27 @@ class UploadToS3 {
     keyFromPublicUrl = (url: string): string | null =>
         url.startsWith(this.publicBaseUrl) ? url.slice(this.publicBaseUrl.length) : null;
 
-    // Every object under a prefix, with when it was stored (follows pagination).
-    listObjects = async (prefix: string): Promise<{ key: string; lastModified: Date }[]> => {
-        const objects: { key: string; lastModified: Date }[] = [];
+    // Every object under a prefix, with when it was stored and its size in bytes (follows pagination).
+    listObjects = async (prefix: string): Promise<{ key: string; lastModified: Date; size: number }[]> => {
+        const objects: { key: string; lastModified: Date; size: number }[] = [];
         let token: string | undefined;
         do {
             const page = await this.s3.send(
                 new ListObjectsV2Command({ Bucket: this.bucket, Prefix: prefix, ContinuationToken: token }),
             );
             for (const obj of page.Contents ?? []) {
-                if (obj.Key) objects.push({ key: obj.Key, lastModified: obj.LastModified ?? new Date(0) });
+                if (obj.Key) objects.push({ key: obj.Key, lastModified: obj.LastModified ?? new Date(0), size: obj.Size ?? 0 });
             }
             token = page.IsTruncated ? page.NextContinuationToken : undefined;
         } while (token);
         return objects;
+    };
+
+    // An object's bytes and content type (e.g. a recording to send for assessment).
+    getObjectBytes = async (key: string): Promise<{ body: Buffer; contentType: string | undefined }> => {
+        const res = await this.s3.send(new GetObjectCommand({ Bucket: this.bucket, Key: key }));
+        if (!res.Body) throw new Error(`S3 object ${key} has no body.`);
+        return { body: Buffer.from(await res.Body.transformToByteArray()), contentType: res.ContentType };
     };
 
     // Every key under a prefix.

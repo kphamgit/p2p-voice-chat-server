@@ -2,8 +2,11 @@ import { Request, Response } from 'express';
 import { randomUUID } from 'node:crypto';
 import UploadToS3 from './upload_to_s3.js';
 import { isOpenAiConfigured, transcribeAudio, translateEnToVi, type AudioFile } from '../openai.js';
+import { assessPronunciation, isAzureSpeechConfigured } from '../azureSpeech.js';
+import { prisma } from '../prisma.js';
 
-// Speech recognition for students' spoken answers (see src/openai.ts). Each
+// Speech recognition for students' spoken answers (see src/openai.ts), and
+// pronunciation scoring for Shadowing (see src/azureSpeech.ts). Each
 // request carries one recording as the multipart `audio` field (kept in
 // memory by multer, see routes/speech.ts).
 
@@ -47,6 +50,13 @@ function uploadedAudio(req: Request, res: Response): Express.Multer.File | null 
     }
     return req.file;
 }
+
+// Shadowing questions: the student repeats the question text.
+const SHADOWING_FORMAT = 9;
+
+// Azure's REST API for short audio takes about 30 s at most; a 16 kHz mono
+// 16-bit WAV of that length is under 1 MB.
+const MAX_ASSESS_BYTES = 1024 * 1024;
 
 class SpeechController {
     // POST /speech/transcribe — the recording's text, and its Vietnamese
@@ -93,6 +103,53 @@ class SpeechController {
         } catch (err: any) {
             console.error('❌ Transcription failed:', err);
             res.status(502).send({ message: `Transcription failed: ${err.message}`, transcription: '', translation: '', audioUrl });
+        }
+    }
+
+    // POST /speech/pronunciation — scores a Shadowing attempt: the multipart
+    // `audio` (16 kHz mono 16-bit WAV, as the Flutter app records) and an
+    // `itemId` form field. The sentence is the item's question text, read here
+    // so the app can't change what it's scored against. Answers the
+    // PronunciationResult of src/azureSpeech.ts: overall scores, and each of
+    // the sentence's words with its score.
+    public async pronunciation(req: Request, res: Response): Promise<void> {
+        if (!isAzureSpeechConfigured()) {
+            res.status(503).send({ message: 'Pronunciation scoring is not set up on the server (AZURE_SPEECH_KEY or AZURE_SERVICE_REGION is missing).' });
+            return;
+        }
+        const file = req.file;
+        if (!file?.buffer?.length) {
+            res.status(400).send({ message: "No audio file provided: send it as the multipart 'audio' field." });
+            return;
+        }
+        if (file.buffer.subarray(0, 4).toString('ascii') !== 'RIFF') {
+            res.status(400).send({ message: 'The recording must be a WAV file (16 kHz mono, 16-bit).' });
+            return;
+        }
+        if (file.buffer.length > MAX_ASSESS_BYTES) {
+            res.status(400).send({ message: 'The recording is too long (about 30 seconds at most).' });
+            return;
+        }
+        const itemId = Number((req.body as { itemId?: string } | undefined)?.itemId);
+        if (!Number.isInteger(itemId) || itemId <= 0) {
+            res.status(400).send({ message: 'itemId is required.' });
+            return;
+        }
+        const item = await prisma.questionItem.findUnique({ where: { id: itemId }, select: { format: true, questionText: true } });
+        if (!item) {
+            res.status(404).send({ message: `Question item ${itemId} not found.` });
+            return;
+        }
+        const sentence = item.questionText?.trim() ?? '';
+        if (item.format !== SHADOWING_FORMAT || !sentence) {
+            res.status(400).send({ message: `Question item ${itemId} is not a Shadowing question with a sentence.` });
+            return;
+        }
+        try {
+            res.json(await assessPronunciation(file.buffer, sentence));
+        } catch (err: any) {
+            console.error('❌ Pronunciation assessment failed:', err);
+            res.status(502).send({ message: `Pronunciation scoring failed: ${err.message}` });
         }
     }
 }
