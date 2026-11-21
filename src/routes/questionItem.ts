@@ -15,8 +15,6 @@ router.post('/:id/clone', QuestionItemController.clone);
 // an id (a new item), the image waits in a pending folder until the item is saved.
 router.post('/images', requireRole('admin'), uploadImage, sendImageUrl);
 router.post('/:id/images', requireRole('admin'), QuestionItemController.ensureExists, uploadImage, sendImageUrl);
-// Generate a voice for the admin's item form (Google TTS → S3 pending folder).
-router.post('/audio', requireRole('admin'), QuestionItemController.generateAudio);
 router.get('/:id', QuestionItemController.findOne);
 router.put('/:id', QuestionItemController.update);
 router.delete('/:id', QuestionItemController.delete);

@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
 import { randomUUID } from 'node:crypto';
-import UploadToS3 from './upload_to_s3.js';
+import UploadToS3, { RECORDINGS_PREFIX } from './upload_to_s3.js';
 import { isOpenAiConfigured, transcribeAudio, translateEnToVi, type AudioFile } from '../openai.js';
 import { assessPronunciation, isAzureSpeechConfigured } from '../azureSpeech.js';
 import { prisma } from '../prisma.js';
@@ -10,9 +10,8 @@ import { prisma } from '../prisma.js';
 // request carries one recording as the multipart `audio` field (kept in
 // memory by multer, see routes/speech.ts).
 
-// Where transcribe-and-save stores recordings: private, like the voice-chat
-// recordings, so they're played through presigned URLs.
-const RECORDINGS_PREFIX = 'audios/recordings/';
+// transcribe-and-save stores recordings under RECORDINGS_PREFIX: private, like
+// the voice-chat recordings, so they're played through presigned URLs.
 
 // File extensions by audio type, for recordings uploaded without a usable
 // file name (OpenAI tells the format from the extension).

@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import UploadToS3 from './upload_to_s3.js';
+import UploadToS3, { RECORDINGS_PREFIX } from './upload_to_s3.js';
 import { prisma } from '../prisma.js';
 import { assessWithTonePerfect, isTonePerfectConfigured } from '../tonePerfect.js';
 import { assessPronunciationInDetail, isAzureSpeechConfigured } from '../azureSpeech.js';
@@ -11,12 +11,11 @@ import { summarizeAzure, summarizeTonePerfect } from '../assessmentSummary.js';
 // src/azureSpeech.ts), to compare the two. Ported from
 // the Django app's get_s3_recordings, which lists the same folder.
 
-// Students' recordings. The kinds of name found there:
+// Students' recordings, under RECORDINGS_PREFIX. The kinds of name found there:
 //   <student>_<date and time>.webm, the date and time written several ways
 //     (nhatminh_19-37-55_6_7_2026, boingoc_10_17_2026_9_19_43_AM, ...)
 //   <userId>/<uuid>.<ext>      (this server's transcribe-and-save)
 //   call-<a>-and-<b>-<ms>.webm (voice-chat calls, two speakers: listed apart)
-const RECORDINGS_PREFIX = 'audios/recordings/';
 
 const STUDENT_NAME = /^([^_/]+)_[^/]+\.[a-z0-9]+$/i;
 const USER_FOLDER = /^(\d+)\/[^/]+\.[a-z0-9]+$/i;

@@ -17,15 +17,33 @@ import {
 import { S3Client } from '@aws-sdk/client-s3';
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
+// Put in front of every key of the files the server stores (question audio,
+// item images, recordings), so a development server's files stay apart from
+// the live ones in the shared bucket: "dev/" in a local .env, unset (no
+// prefix) on the live server. S3_PREFIX=dev and S3_PREFIX=dev/ mean the same.
+export const S3_PREFIX = (process.env['S3_PREFIX'] ?? '').trim().replace(/^\/+|\/+$/g, '').replace(/.+/, '$&/');
+
+// Students' recordings: private, played through presigned URLs.
+export const RECORDINGS_PREFIX = `${S3_PREFIX}audios/recordings/`;
+
+// This app's own bucket (S3_BUCKET) and its region (S3_REGION, default
+// us-east-2). Required, with no default: the old shared bucket "phuyenenglish"
+// belongs to the Django app now, and a missing setting must never send files
+// (or the cleanups' deletes) there.
+const S3_BUCKET = (process.env['S3_BUCKET'] ?? '').trim();
+if (!S3_BUCKET) throw new Error('S3_BUCKET is not set: put this app\'s bucket name in .env.');
+const S3_REGION = (process.env['S3_REGION'] ?? '').trim() || 'us-east-2';
+
 class UploadToS3 {
     // No credentials block: the AWS SDK auto-loads them from the environment
-    // (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY), 
+    // (AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY, a key of the IAM user
+    // tienganhtuyhoa-server, allowed on this bucket only);
     // the advantage of auto-load is you can use an IAM role on AWS infra.
     config: S3ClientConfigType = {
-        region: 'us-east-2',
+        region: S3_REGION,
     }
 
-    bucket = 'phuyenenglish';
+    bucket = S3_BUCKET;
 
     s3 = new S3Client(this.config);
 
@@ -45,10 +63,11 @@ class UploadToS3 {
     };
 
     // --- Public files (item images and question audio) ------------------------
-    // Everything under images/ and question-audios/ is meant to be publicly
-    // readable (a bucket policy grants s3:GetObject on both), so clients load
-    // these by plain URL; recordings under audios/ stay private and use
-    // presigned URLs.
+    // Everything under images/ and question-audios/ (and dev/images/ and
+    // dev/question-audios/, see S3_PREFIX) is meant to be publicly readable (a
+    // bucket policy grants s3:GetObject on them), so clients load these by
+    // plain URL; recordings (RECORDINGS_PREFIX) stay private and use presigned
+    // URLs.
 
     publicBaseUrl = `https://${this.bucket}.s3.${this.config.region}.amazonaws.com/`;
 
@@ -172,7 +191,7 @@ class UploadToS3 {
                 // Don't read req.body here: multer-s3's key runs mid-stream, before
                 // form fields appended after the file are parsed, so they'd be
                 // undefined. The filename already includes a timestamp.
-                cb(null, `audios/recordings/${file.originalname}`);
+                cb(null, `${RECORDINGS_PREFIX}${file.originalname}`);
             }
         })
     });
@@ -191,25 +210,16 @@ export interface ImageFolder {
 
 export const QUESTION_ITEM_IMAGES: ImageFolder = {
     kind: 'question item',
-    pending: 'images/question-items/pending/',
-    item: (itemId) => `images/question-items/${itemId}/`,
+    pending: `${S3_PREFIX}images/question-items/pending/`,
+    item: (itemId) => `${S3_PREFIX}images/question-items/${itemId}/`,
 };
 
 export const TEXT_ITEM_IMAGES: ImageFolder = {
     kind: 'text item',
-    pending: 'images/text-items/pending/',
-    item: (itemId) => `images/text-items/${itemId}/`,
+    pending: `${S3_PREFIX}images/text-items/pending/`,
+    item: (itemId) => `${S3_PREFIX}images/text-items/${itemId}/`,
 };
 
 export const IMAGE_FOLDERS = [QUESTION_ITEM_IMAGES, TEXT_ITEM_IMAGES];
-
-// Question audio (generated speech), public like images: the bucket policy
-// grants s3:GetObject on question-audios/*. Voices generated in the item form
-// wait in pending/ until the item is saved (see questionAudio.ts).
-export const PENDING_AUDIO_PREFIX = 'question-audios/pending/';
-
-export function questionItemAudioPrefix(itemId: number): string {
-    return `question-audios/${itemId}/`;
-}
 
 export default new UploadToS3();

@@ -18,6 +18,7 @@ import lemmatizeRoutes from "./routes/lemmatize.js";
 import turnRoutes from "./routes/turn.js";
 import ttsRoutes from "./routes/tts.js";
 import dictionaryRoutes from "./routes/dictionary.js";
+import audioRoutes from "./routes/audio.js";
 import cardRoutes from "./routes/card.js";
 import speechRoutes from "./routes/speech.js";
 import speechAssessmentRoutes from "./routes/speechAssessment.js";
@@ -28,7 +29,7 @@ import { verifyAuthToken } from "./jwt.js";
 import { prisma } from "./prisma.js";
 import { getTurnIceServers, isTurnConfigured } from "./turn.js";
 import { deleteStalePendingImages } from "./media.js";
-import { deleteStalePendingAudio } from "./questionAudio.js";
+import { deleteUnusedAudios } from "./audio.js";
 import { deleteOldRefreshTokens } from "./refreshTokens.js";
 
 const app = express();
@@ -66,6 +67,8 @@ mountRoutes(app, "/turn-credentials", requireAuth, turnRoutes);
 // Google text-to-speech (auth-gated: every request is billed).
 mountRoutes(app, "/tts", requireAuth, ttsRoutes);
 mountRoutes(app, "/dictionary", requireAuth, dictionaryRoutes);
+// Question audio (generated voices and the library), for the admin's item form.
+mountRoutes(app, "/audios", requireAuth, audioRoutes);
 mountRoutes(app, "/cards", requireAuth, cardRoutes);
 
 // OpenAI speech recognition of spoken answers, plus a Vietnamese translation (auth-gated: billed).
@@ -98,15 +101,16 @@ if (isTurnConfigured()) {
   console.warn("⚠️ METERED_APP_NAME / METERED_SECRET_KEY not set — TURN disabled, calls use direct connections only");
 }
 
-// Delete images pasted into, and voices generated in, item forms that were
-// never saved (they wait in S3's pending folders for a day). Runs at startup and every 6 hours;
-// unref() so the timer never keeps the process alive on shutdown.
-function sweepPendingImages() {
+// Delete images pasted into item forms that were never saved (they wait in
+// S3's pending folders for a day), and audios that nothing uses (see
+// deleteUnusedAudios). Runs at startup and every 6 hours; unref() so the timer
+// never keeps the process alive on shutdown.
+function sweepUnusedFiles() {
   deleteStalePendingImages().catch((err) => console.error("❌ Pending image cleanup failed (will retry):", err));
-  deleteStalePendingAudio().catch((err) => console.error("❌ Pending audio cleanup failed (will retry):", err));
+  deleteUnusedAudios().catch((err) => console.error("❌ Unused audio cleanup failed (will retry):", err));
 }
-sweepPendingImages();
-setInterval(sweepPendingImages, 6 * 60 * 60 * 1000).unref();
+sweepUnusedFiles();
+setInterval(sweepUnusedFiles, 6 * 60 * 60 * 1000).unref();
 
 // Delete expired refresh tokens (and long-revoked ones) once a day.
 function sweepRefreshTokens() {

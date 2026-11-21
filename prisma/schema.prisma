@@ -25,6 +25,7 @@ model User {
   refreshTokens RefreshToken[]
   cardReviews   CardReview[]
   reviewLogs    ReviewLog[]
+  audios        Audio[]
 }
 
 // A device's long-lived sign-in for the student app (see src/refreshTokens.ts).
@@ -100,17 +101,23 @@ model QuestionItem {
   explanation                String? // optional: why the answer is correct, shown to the student
   showExplanationWhenCorrect Boolean   @default(false) @map("show_explanation_when_correct") // also show the explanation after a correct answer (by default only after a wrong one)
   media                      String? // optional text with inline media, e.g. images as ![](<public S3 URL>) (the question's audio is in `audio`)
-  audio                      String? // optional: public S3 URL of the question's MP3, under question-audios/<item id>/
-  audioText                  String?   @map("audio_text") // the text the audio speaks (kept so the voice can be regenerated from it)
-  voiceName                  String?   @map("voice_name") // the voice that spoke the audio; mostly ElevenLabs voices (the preferred TTS engine), e.g. River, sometimes Google, e.g. en-US-Chirp3-HD-Charon
-  trailingAudio              String?   @map("trailing_audio") // optional second MP3 (public S3 URL, under question-audios/<item id>/ like `audio`)
-  trailingAudioText          String?   @map("trailing_audio_text") // the text the trailing audio speaks
-  trailingVoiceName          String?   @map("trailing_voice_name") // the voice that spoke the trailing audio (same kind of id as voiceName)
+  audioId                    Int?      @map("audio_id") // optional: the question's audio (required for format 9, saying its question text)
+  audio                      Audio?    @relation("QuestionAudio", fields: [audioId], references: [id], onDelete: Restrict)
+  trailingAudioId            Int?      @map("trailing_audio_id") // optional: a second audio, played once the question is answered right
+  trailingAudio              Audio?    @relation("QuestionTrailingAudio", fields: [trailingAudioId], references: [id], onDelete: Restrict)
   checkOrder                 Boolean   @default(false) @map("check_order") // only applies to question format 8
   halfHandsFree              Boolean   @default(false) @map("half_hands_free") // only applies to question format 7: the student app starts the microphone by itself once the question's audio ends (the student still taps to stop)
+  // only applies to question format 9 (Shadowing): how VoiceAnalyzer scores the student's recording,
+  // as the phuyenenglish.com teacher panel's Scoring options send them: { targeted_words,
+  // strict_connected_speech, link_tolerance, stress_words, stress_contrast_ratio,
+  // melody_min_similarity, stress_source, fall_match_ratio, rise_match_ratio }. Null = not set.
+  scoringOptions             Json?     @map("scoring_options")
   hideText                   Boolean   @default(false) @map("hide_text") // only applies to question format 9 (Shadowing): the student app hides the sentence until the student has tried saying it from the audio alone
   itemGroupId                Int       @map("item_group_id") // FK column → ItemGroup.id
   itemGroup                  ItemGroup @relation(fields: [itemGroupId], references: [id])
+
+  @@index([audioId])
+  @@index([trailingAudioId])
 }
 
 // A block of text in an item group (e.g. a reading passage or a note), shown
@@ -289,4 +296,33 @@ model ReviewLog {
 
   @@index([userId, answeredAt(sort: Desc)])
   @@index([cardId])
+}
+
+// Every audio a question can play: one MP3 in S3, public, at
+// question-audios/<uuid>.mp3 (dev/question-audios/ from a development server,
+// see S3_PREFIX in src/controllers/upload_to_s3.ts), never overwritten (regenerating makes a new
+// one). Made only by the admin's Generate voice (POST /audios). Questions point
+// to it (QuestionItem.audioId / trailingAudioId), several may share one, and
+// the database refuses to delete one still in use. The library (the item
+// form's "From library") is the audios
+// with inLibrary set. An audio that no question uses and isn't in the library
+// is deleted with its file after a day (deleteUnusedAudios).
+model Audio {
+  id          Int      @id @default(autoincrement())
+  s3Key       String   @unique @map("s3_key")
+  text        String // what it says: the words only, as students see them
+  ttsText     String   @default("") @map("tts_text") // the SSML / tagged text it was generated from, when that differs from text
+  provider    String // google | elevenlabs
+  voice       String // the provider's voice id, e.g. en-US-Chirp3-HD-Charon, or an ElevenLabs id
+  speed       Float? // the speaking rate asked for (1 is normal), null for the default
+  inLibrary   Boolean  @default(false) @map("in_library")
+  keywords    String[] @default([]) // for searching the library: lower-case, trimmed, each at most 50 characters
+  createdById Int?     @map("created_by_id")
+  createdBy   User?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  questionAudios    QuestionItem[] @relation("QuestionAudio")
+  questionTrailings QuestionItem[] @relation("QuestionTrailingAudio")
+
+  @@index([inLibrary, createdAt])
 }

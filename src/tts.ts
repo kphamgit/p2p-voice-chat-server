@@ -95,6 +95,11 @@ export async function listTtsProviders(): Promise<TtsProviderInfo[]> {
     );
 }
 
+// The voice `synthesizeSpeech` speaks with: `voice`, or the provider's default.
+export function voiceFor(provider: TtsProvider, voice?: string): string {
+    return voice || PROVIDERS[provider].defaultVoice;
+}
+
 // Speaks `text` with `provider` (default Google) and returns MP3 audio.
 // `rate` is the speaking rate (1 is normal), clamped to what the provider
 // accepts; `voice` defaults to the provider's default. Throws TtsInputError
@@ -106,5 +111,5 @@ export async function synthesizeSpeech(
     const p = PROVIDERS[provider];
     if (!text.trim()) throw new TtsInputError('No text provided.');
     if (!p.configured()) throw new TtsInputError(`${p.name} is not set up on the server.`);
-    return p.synthesize(text, Number.isFinite(rate) ? rate : 1, voice || p.defaultVoice);
+    return p.synthesize(text, Number.isFinite(rate) ? rate : 1, voiceFor(provider, voice));
 }

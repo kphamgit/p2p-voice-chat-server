@@ -1,9 +1,9 @@
 import { NextFunction, Request, Response } from 'express';
+import { Prisma } from '../../generated/prisma/client.js';
 import { prisma } from '../prisma.js';
 import UploadToS3, { QUESTION_ITEM_IMAGES } from './upload_to_s3.js';
 import { adoptPendingImages, copyImages, deleteAllImages, deleteUnusedImages } from '../media.js';
-import { adoptPendingAudio, copyAudio, deleteUnusedAudio, generateQuestionAudio, isAllowedAudio } from '../questionAudio.js';
-import { isTtsProvider, TtsInputError } from '../tts.js';
+import { audioJson, plainText } from '../audio.js';
 
 interface ItemBody {
     itemNumber?: number;
@@ -13,17 +13,14 @@ interface ItemBody {
     choices?: string | null;
     format?: number; // required in the DB; omit on create to get the default (1)
     media?: string | null; // text with inline images, ![](<public S3 URL>)
-    audio?: string | null; // public S3 URL of the question's MP3 (see questionAudio.ts)
-    audioText?: string | null; // the text the audio speaks
-    voiceName?: string | null; // the id of the voice that speaks it (mostly ElevenLabs)
-    trailingAudio?: string | null; // a second MP3, stored like audio
-    trailingAudioText?: string | null;
-    trailingVoiceName?: string | null;
+    audioId?: number | null; // the question's audio (an Audio id, see src/audio.ts)
+    trailingAudioId?: number | null; // a second audio, played once the question is answered right
     explanation?: string | null;
     showExplanationWhenCorrect?: boolean; // default false
     checkOrder?: boolean; // default false; only applies to question format 8
     halfHandsFree?: boolean; // default false; only applies to question format 7
     hideText?: boolean; // default false; only applies to question format 9
+    scoringOptions?: ScoringOptions | null; // only applies to question format 9 (see scoringOptionsProblem)
     itemGroupId?: number;
 }
 
@@ -33,7 +30,56 @@ function invalidFormat(format: unknown): boolean {
     return format !== undefined && !Number.isInteger(format);
 }
 
-// For optional text fields (media, audioText, voiceName, trailingAudioText, trailingVoiceName, explanation): text, null, or omitted.
+// A Shadowing question's (format 9) scoring options, as the phuyenenglish.com
+// teacher panel sends them to VoiceAnalyzer (same keys, same meaning).
+interface ScoringOptions {
+    targeted_words: string; // words that should link to the next one, e.g. "is" (is_a)
+    strict_connected_speech: boolean; // check linking (always on when targeted_words is set)
+    link_tolerance: number; // how much longer a pause between linked words may be than the reference's (0.5–3)
+    stress_words: string; // "accept, apology": the words whose syllable stress is checked
+    stress_contrast_ratio: number; // share of the reference's stressed/unstressed contrast to reach (0.1–1)
+    melody_min_similarity: number; // melody shape similarity for "Same melody" (0.1–0.9)
+    stress_source: 'dictionary' | 'reference'; // who decides the right stressed syllable
+    fall_match_ratio: number; // paused check; share of the reference's fall (0.1–1)
+    rise_match_ratio: number; // paused check; share of the reference's rise (0.1–1)
+}
+
+const SCORING_RANGES: Record<string, [number, number]> = {
+    link_tolerance: [0.5, 3],
+    stress_contrast_ratio: [0.1, 1],
+    melody_min_similarity: [0.1, 0.9],
+    fall_match_ratio: [0.1, 1],
+    rise_match_ratio: [0.1, 1],
+};
+
+// What's wrong with scoringOptions (omitted and null are fine), or null.
+function scoringOptionsProblem(value: unknown): string | null {
+    if (value === undefined || value === null) return null;
+    if (typeof value !== 'object' || Array.isArray(value)) return 'scoringOptions must be an object or null.';
+    const o = value as Record<string, unknown>;
+    for (const key of ['targeted_words', 'stress_words']) {
+        if (typeof o[key] !== 'string') return `scoringOptions.${key} must be text.`;
+    }
+    if (typeof o.strict_connected_speech !== 'boolean') return 'scoringOptions.strict_connected_speech must be true or false.';
+    if (o.stress_source !== 'dictionary' && o.stress_source !== 'reference') {
+        return 'scoringOptions.stress_source must be dictionary or reference.';
+    }
+    for (const [key, [min, max]] of Object.entries(SCORING_RANGES)) {
+        const n = o[key];
+        if (typeof n !== 'number' || !Number.isFinite(n) || n < min || n > max) {
+            return `scoringOptions.${key} must be a number from ${min} to ${max}.`;
+        }
+    }
+    const known = new Set(['targeted_words', 'stress_words', 'strict_connected_speech', 'stress_source', ...Object.keys(SCORING_RANGES)]);
+    const unknown = Object.keys(o).find((k) => !known.has(k));
+    return unknown ? `scoringOptions has an unknown option: ${unknown}.` : null;
+}
+
+// Prisma's way of storing a JSON column as SQL NULL.
+const scoringOptionsData = (value: ScoringOptions | null | undefined) =>
+    value === null ? Prisma.DbNull : (value as Prisma.InputJsonValue | undefined);
+
+// For optional text fields (media, explanation): text, null, or omitted.
 function invalidOptionalText(value: unknown): boolean {
     return value !== undefined && value !== null && typeof value !== 'string';
 }
@@ -51,73 +97,76 @@ async function savePendingImages<T extends { id: number; media: string | null }>
     return { ...item, media };
 }
 
-// Likewise for voices generated before saving (the audio and the trailing
-// audio): move them from pending into the item's folder and save the URLs of
-// the moved copies.
-async function savePendingAudio<T extends { id: number; audio: string | null; trailingAudio: string | null }>(item: T): Promise<T> {
-    const main = await adoptPendingAudio(item.id, item.audio);
-    const trailing = await adoptPendingAudio(item.id, item.trailingAudio);
-    const adoptedKeys = [main.adoptedKey, trailing.adoptedKey].filter((key): key is string => key !== null);
-    if (adoptedKeys.length === 0) return item;
-    const data = { audio: main.audio, trailingAudio: trailing.audio };
-    await prisma.questionItem.update({ where: { id: item.id }, data });
-    UploadToS3.deleteKeys(adoptedKeys).catch((err) =>
-        console.error(`❌ Deleting moved pending audio of question item ${item.id} failed:`, err),
-    );
-    return { ...item, ...data };
+// The 500 message when the item saved but its pasted images couldn't be moved.
+// The item still points at the pending copies (kept for a day), so saving the
+// item again from Edit retries the move.
+function pendingImagesFailed(itemId: number, verb: string, err: any): string {
+    console.error(`❌ Moving pending images of question item ${itemId} failed:`, err);
+    return `Question item ${itemId} was ${verb}, but its pasted images couldn't be stored (${err.message}). Open it with Edit and save again.`;
 }
 
-// Both of the above, after saving an item.
-async function savePendingFiles<T extends { id: number; media: string | null; audio: string | null; trailingAudio: string | null }>(item: T): Promise<T> {
-    return savePendingAudio(await savePendingImages(item));
+// Loaded with every question item, for questionItemJson.
+export const WITH_AUDIO = { audio: true, trailingAudio: true } satisfies Prisma.QuestionItemInclude;
+type ItemWithAudio = Prisma.QuestionItemGetPayload<{ include: typeof WITH_AUDIO }>;
+
+// A question item as the API returns it: its audio and trailing audio as
+// objects ({ id, url, text, … }, see audioJson), or null.
+export function questionItemJson<T extends ItemWithAudio>(item: T) {
+    return {
+        ...item,
+        audio: item.audio && audioJson(item.audio),
+        trailingAudio: item.trailingAudio && audioJson(item.trailingAudio),
+    };
 }
 
-// The 500 message when the item saved but its pasted images or generated voice
-// couldn't be moved. The item still points at the pending copies (kept for a
-// day), so saving the item again from Edit retries the move.
-function pendingFilesFailed(itemId: number, verb: string, err: any): string {
-    console.error(`❌ Moving pending files of question item ${itemId} failed:`, err);
-    return `Question item ${itemId} was ${verb}, but its pasted images or voice couldn't be stored (${err.message}). Open it with Edit and save again.`;
+// What's wrong with the audioId and trailingAudioId sent (omitted and null are
+// fine), or null.
+async function audioIdsProblem(body: ItemBody): Promise<string | null> {
+    for (const name of ['audioId', 'trailingAudioId'] as const) {
+        const value = body[name];
+        if (value === undefined || value === null) continue;
+        if (!Number.isInteger(value) || value < 1) return `${name} must be an audio id, or null.`;
+        if (!(await prisma.audio.findUnique({ where: { id: value }, select: { id: true } }))) {
+            return `${name}: audio ${value} does not exist.`;
+        }
+    }
+    return null;
+}
+
+// A Shadowing question (format 9) must have audio, saying its question text.
+// Checked on what the item will be once saved. Null when fine.
+async function shadowingProblem(format: number, questionText: string | null, audioId: number | null): Promise<string | null> {
+    if (format !== 9) return null;
+    if (audioId === null) return 'A Shadowing question needs audio: generate a voice, or pick one from the library.';
+    const audio = await prisma.audio.findUnique({ where: { id: audioId }, select: { text: true } });
+    if (audio && plainText(audio.text) !== plainText(questionText)) {
+        return `A Shadowing question's audio must say its question text, but the audio says “${audio.text}”.`;
+    }
+    return null;
 }
 
 class QuestionItemController {
     // GET /question-items — list all question items, ordered by itemNumber.
     public async findAll(_req: Request, res: Response): Promise<void> {
         try {
-            const items = await prisma.questionItem.findMany({ orderBy: { itemNumber: 'asc' } });
-            res.json(items);
+            const items = await prisma.questionItem.findMany({ orderBy: { itemNumber: 'asc' }, include: WITH_AUDIO });
+            res.json(items.map(questionItemJson));
         } catch (err: any) {
             res.status(500).send({ message: err.message || 'Error retrieving question items.' });
         }
     }
 
     // POST /question-items — create a question item from
-    // { itemNumber, itemGroupId, questionText?, questionPrompt?, answerKey?, choices?, format? (default 1), media?, audio?, audioText?, voiceName?, trailingAudio?, trailingAudioText?, trailingVoiceName?, explanation?, showExplanationWhenCorrect?, checkOrder?, halfHandsFree?, hideText? }.
+    // { itemNumber, itemGroupId, questionText?, questionPrompt?, answerKey?, choices?, format? (default 1), media?, audioId?, trailingAudioId?, explanation?, showExplanationWhenCorrect?, checkOrder?, halfHandsFree?, hideText?, scoringOptions? }.
     public async create(req: Request, res: Response): Promise<void> {
         try {
-            const { itemNumber, questionText, questionPrompt, answerKey, choices, format, media, audio, audioText, voiceName, trailingAudio, trailingAudioText, trailingVoiceName, explanation, showExplanationWhenCorrect, checkOrder, halfHandsFree, hideText, itemGroupId } = req.body as ItemBody;
+            const { itemNumber, questionText, questionPrompt, answerKey, choices, format, media, audioId, trailingAudioId, explanation, showExplanationWhenCorrect, checkOrder, halfHandsFree, hideText, scoringOptions, itemGroupId } = req.body as ItemBody;
             if (invalidFormat(format)) {
                 res.status(400).send({ message: 'format must be a whole number.' });
                 return;
             }
             if (invalidOptionalText(media)) {
                 res.status(400).send({ message: 'media must be text.' });
-                return;
-            }
-            if (invalidOptionalText(audioText)) {
-                res.status(400).send({ message: 'audioText must be text.' });
-                return;
-            }
-            if (invalidOptionalText(voiceName)) {
-                res.status(400).send({ message: 'voiceName must be text.' });
-                return;
-            }
-            if (invalidOptionalText(trailingAudioText)) {
-                res.status(400).send({ message: 'trailingAudioText must be text.' });
-                return;
-            }
-            if (invalidOptionalText(trailingVoiceName)) {
-                res.status(400).send({ message: 'trailingVoiceName must be text.' });
                 return;
             }
             if (invalidOptionalText(explanation)) {
@@ -140,29 +189,34 @@ class QuestionItemController {
                 res.status(400).send({ message: 'hideText must be true or false.' });
                 return;
             }
-            if (audio !== undefined && !isAllowedAudio(audio)) {
-                res.status(400).send({ message: 'audio must be a voice generated in the item form, or null.' });
-                return;
-            }
-            if (trailingAudio !== undefined && !isAllowedAudio(trailingAudio)) {
-                res.status(400).send({ message: 'trailingAudio must be a voice generated in the item form, or null.' });
+            const scoringProblem = scoringOptionsProblem(scoringOptions);
+            if (scoringProblem) {
+                res.status(400).send({ message: scoringProblem });
                 return;
             }
             if (itemNumber == null || itemGroupId == null) {
                 res.status(400).send({ message: 'itemNumber and itemGroupId are required.' });
                 return;
             }
+            const audioProblem =
+                (await audioIdsProblem(req.body as ItemBody)) ??
+                (await shadowingProblem(format ?? 1, questionText ?? null, audioId ?? null));
+            if (audioProblem) {
+                res.status(400).send({ message: audioProblem });
+                return;
+            }
             const created = await prisma.questionItem.create({
-                data: { itemNumber, questionText, questionPrompt, answerKey, choices, format, media, audio, audioText, voiceName, trailingAudio, trailingAudioText, trailingVoiceName, explanation, showExplanationWhenCorrect, checkOrder, halfHandsFree, hideText, itemGroupId },
+                data: { itemNumber, questionText, questionPrompt, answerKey, choices, format, media, audioId, trailingAudioId, explanation, showExplanationWhenCorrect, checkOrder, halfHandsFree, hideText, scoringOptions: scoringOptionsData(scoringOptions), itemGroupId },
+                include: WITH_AUDIO,
             });
             let item;
             try {
-                item = await savePendingFiles(created);
+                item = await savePendingImages(created);
             } catch (err: any) {
-                res.status(500).send({ message: pendingFilesFailed(created.id, 'created', err) });
+                res.status(500).send({ message: pendingImagesFailed(created.id, 'created', err) });
                 return;
             }
-            res.status(201).json(item);
+            res.status(201).json(questionItemJson(item));
         } catch (err: any) {
             if (err?.code === 'P2003') {
                 res.status(400).send({ message: `Item group ${req.body?.itemGroupId} does not exist.` });
@@ -197,36 +251,34 @@ class QuestionItemController {
                         choices: source.choices,
                         format: source.format,
                         explanation: source.explanation,
-                        audioText: source.audioText,
-                        voiceName: source.voiceName,
-                        trailingAudioText: source.trailingAudioText,
-                        trailingVoiceName: source.trailingVoiceName,
+                        // The same audios: they're shared, and never change.
+                        audioId: source.audioId,
+                        trailingAudioId: source.trailingAudioId,
                         showExplanationWhenCorrect: source.showExplanationWhenCorrect,
                         checkOrder: source.checkOrder,
                         halfHandsFree: source.halfHandsFree,
                         hideText: source.hideText,
-                        // media, audio and trailingAudio are filled in below, once their files are copied.
+                        scoringOptions: source.scoringOptions ?? Prisma.DbNull,
+                        // media is filled in below, once its images are copied.
                         itemGroupId: source.itemGroupId,
                     },
+                    include: WITH_AUDIO,
                 });
             });
-            if (source.media || source.audio || source.trailingAudio) {
+            if (source.media) {
                 try {
                     const media = await copyImages(QUESTION_ITEM_IMAGES, source.media, source.id, copy.id);
-                    const audio = await copyAudio(source.audio, source.id, copy.id);
-                    const trailingAudio = await copyAudio(source.trailingAudio, source.id, copy.id);
-                    res.status(201).json(
-                        await prisma.questionItem.update({ where: { id: copy.id }, data: { media, audio, trailingAudio } }),
-                    );
+                    const updated = await prisma.questionItem.update({ where: { id: copy.id }, data: { media }, include: WITH_AUDIO });
+                    res.status(201).json(questionItemJson(updated));
                 } catch (err: any) {
-                    console.error(`❌ Copying files of question item ${source.id} failed:`, err);
+                    console.error(`❌ Copying images of question item ${source.id} failed:`, err);
                     res.status(500).send({
-                        message: `Question item ${copy.id} was cloned without its media and audio: copying the files failed (${err.message}).`,
+                        message: `Question item ${copy.id} was cloned without its media: copying the images failed (${err.message}).`,
                     });
                 }
                 return;
             }
-            res.status(201).json(copy);
+            res.status(201).json(questionItemJson(copy));
         } catch (err: any) {
             res.status(500).send({ message: err.message || 'Error cloning question item.' });
         }
@@ -236,46 +288,30 @@ class QuestionItemController {
     public async findOne(req: Request, res: Response): Promise<void> {
         try {
             const id = Number(req.params.id);
-            const item = await prisma.questionItem.findUnique({ where: { id }, include: { itemGroup: true } });
+            const item = await prisma.questionItem.findUnique({ where: { id }, include: { itemGroup: true, ...WITH_AUDIO } });
             if (!item) {
                 res.status(404).send({ message: `Question item ${req.params.id} not found.` });
                 return;
             }
-            res.json(item);
+            res.json(questionItemJson(item));
         } catch (err: any) {
             res.status(500).send({ message: err.message || 'Error retrieving question item.' });
         }
     }
 
     // PUT /question-items/:id — update any of itemNumber, questionText, questionPrompt, answerKey, choices, format,
-    // media, audio, audioText, voiceName, trailingAudio, trailingAudioText, trailingVoiceName, explanation, showExplanationWhenCorrect, checkOrder,
-    // halfHandsFree, hideText, itemGroupId. Saving media (or audio / trailing audio) also deletes the item's images (or audio files) it no longer uses.
+    // media, audioId, trailingAudioId, explanation, showExplanationWhenCorrect, checkOrder, halfHandsFree, hideText,
+    // scoringOptions, itemGroupId. Saving media also deletes the item's images it no longer uses.
     public async update(req: Request, res: Response): Promise<void> {
         try {
             const id = Number(req.params.id);
-            const { itemNumber, questionText, questionPrompt, answerKey, choices, format, media, audio, audioText, voiceName, trailingAudio, trailingAudioText, trailingVoiceName, explanation, showExplanationWhenCorrect, checkOrder, halfHandsFree, hideText, itemGroupId } = req.body as ItemBody;
+            const { itemNumber, questionText, questionPrompt, answerKey, choices, format, media, audioId, trailingAudioId, explanation, showExplanationWhenCorrect, checkOrder, halfHandsFree, hideText, scoringOptions, itemGroupId } = req.body as ItemBody;
             if (invalidFormat(format)) {
                 res.status(400).send({ message: 'format must be a whole number.' });
                 return;
             }
             if (invalidOptionalText(media)) {
                 res.status(400).send({ message: 'media must be text.' });
-                return;
-            }
-            if (invalidOptionalText(audioText)) {
-                res.status(400).send({ message: 'audioText must be text.' });
-                return;
-            }
-            if (invalidOptionalText(voiceName)) {
-                res.status(400).send({ message: 'voiceName must be text.' });
-                return;
-            }
-            if (invalidOptionalText(trailingAudioText)) {
-                res.status(400).send({ message: 'trailingAudioText must be text.' });
-                return;
-            }
-            if (invalidOptionalText(trailingVoiceName)) {
-                res.status(400).send({ message: 'trailingVoiceName must be text.' });
                 return;
             }
             if (invalidOptionalText(explanation)) {
@@ -298,34 +334,44 @@ class QuestionItemController {
                 res.status(400).send({ message: 'hideText must be true or false.' });
                 return;
             }
-            if (audio !== undefined && !isAllowedAudio(audio, id)) {
-                res.status(400).send({ message: 'audio must be a voice generated in the item form, or null.' });
+            const scoringProblem = scoringOptionsProblem(scoringOptions);
+            if (scoringProblem) {
+                res.status(400).send({ message: scoringProblem });
                 return;
             }
-            if (trailingAudio !== undefined && !isAllowedAudio(trailingAudio, id)) {
-                res.status(400).send({ message: 'trailingAudio must be a voice generated in the item form, or null.' });
+            let audioProblem = await audioIdsProblem(req.body as ItemBody);
+            // The Shadowing rule, on the item as it will be, when this changes any of what it's about.
+            if (!audioProblem && (format !== undefined || questionText !== undefined || audioId !== undefined)) {
+                const current = await prisma.questionItem.findUnique({
+                    where: { id },
+                    select: { format: true, questionText: true, audioId: true },
+                });
+                if (current) {
+                    audioProblem = await shadowingProblem(
+                        format ?? current.format,
+                        questionText === undefined ? current.questionText : questionText,
+                        audioId === undefined ? current.audioId : audioId,
+                    );
+                }
+            }
+            if (audioProblem) {
+                res.status(400).send({ message: audioProblem });
                 return;
             }
             let item = await prisma.questionItem.update({
                 where: { id },
-                data: { itemNumber, questionText, questionPrompt, answerKey, choices, format, media, audio, audioText, voiceName, trailingAudio, trailingAudioText, trailingVoiceName, explanation, showExplanationWhenCorrect, checkOrder, halfHandsFree, hideText, itemGroupId }, // undefined fields are left unchanged
+                data: { itemNumber, questionText, questionPrompt, answerKey, choices, format, media, audioId, trailingAudioId, explanation, showExplanationWhenCorrect, checkOrder, halfHandsFree, hideText, scoringOptions: scoringOptionsData(scoringOptions), itemGroupId }, // undefined fields are left unchanged
+                include: WITH_AUDIO,
             });
-            const audioSent = audio !== undefined || trailingAudio !== undefined;
-            if (media !== undefined || audioSent) {
+            if (media !== undefined) {
                 try {
-                    item = await savePendingFiles(item);
+                    item = await savePendingImages(item);
                 } catch (err: any) {
-                    res.status(500).send({ message: pendingFilesFailed(id, 'saved', err) });
+                    res.status(500).send({ message: pendingImagesFailed(id, 'saved', err) });
                     return;
                 }
             }
-            res.json(item);
-            if (audioSent) {
-                // Best effort, after responding, like the images below.
-                deleteUnusedAudio(id, [item.audio, item.trailingAudio]).catch((err) =>
-                    console.error(`❌ Cleaning up audio of question item ${id} failed:`, err),
-                );
-            }
+            res.json(questionItemJson(item));
             if (media !== undefined) {
                 // Best effort, after responding: a leftover image costs a little
                 // storage; the next save of the media tries again.
@@ -346,7 +392,9 @@ class QuestionItemController {
         }
     }
 
-    // DELETE /question-items/:id — remove a question item and its images and audio.
+    // DELETE /question-items/:id — remove a question item and its images. Its
+    // audios stay (other questions or the library may use them); unused ones
+    // are deleted after a day (deleteUnusedAudios).
     public async delete(req: Request, res: Response): Promise<void> {
         try {
             const id = Number(req.params.id);
@@ -354,9 +402,6 @@ class QuestionItemController {
             res.status(204).send();
             deleteAllImages(QUESTION_ITEM_IMAGES, id).catch((err) =>
                 console.error(`❌ Deleting images of deleted question item ${id} failed:`, err),
-            );
-            deleteUnusedAudio(id, []).catch((err) =>
-                console.error(`❌ Deleting audio of deleted question item ${id} failed:`, err),
             );
         } catch (err: any) {
             if (err?.code === 'P2025') {
@@ -378,42 +423,6 @@ class QuestionItemController {
             next();
         } catch (err: any) {
             res.status(500).send({ message: err.message || 'Error retrieving question item.' });
-        }
-    }
-
-    // POST /question-items/audio — speak { text, provider?, voice?, rate? }
-    // (provider: google, the default, or elevenlabs; see tts.ts), store the MP3 in S3's pending folder and return
-    // { url }. The form plays it; saving the item with audio: url keeps it (and
-    // moves it into the item's folder), otherwise it's deleted after a day.
-    public async generateAudio(req: Request, res: Response): Promise<void> {
-        const { text, provider = 'google', voice, rate } = (req.body ?? {}) as {
-            text?: unknown;
-            provider?: unknown;
-            voice?: unknown;
-            rate?: unknown;
-        };
-        if (typeof text !== 'string' || (voice !== undefined && typeof voice !== 'string')) {
-            res.status(400).send({ message: 'Send { text, provider?, voice?, rate? } with text and voice as strings.' });
-            return;
-        }
-        if (!isTtsProvider(provider)) {
-            res.status(400).send({ message: 'provider must be google or elevenlabs.' });
-            return;
-        }
-        try {
-            const url = await generateQuestionAudio(text.trim(), {
-                provider,
-                rate: rate === undefined ? undefined : Number(rate),
-                voice: voice || undefined,
-            });
-            res.status(201).json({ url });
-        } catch (err: any) {
-            if (err instanceof TtsInputError) {
-                res.status(400).send({ message: err.message });
-                return;
-            }
-            console.error('❌ Generating question audio failed:', err);
-            res.status(502).send({ message: `Generating the voice failed: ${err.message}` });
         }
     }
 }

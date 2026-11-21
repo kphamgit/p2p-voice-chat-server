@@ -1,5 +1,6 @@
 import { Request, Response } from 'express';
 import { prisma } from '../prisma.js';
+import { questionItemJson, WITH_AUDIO } from './questionItem.js';
 
 const ITEM_TYPES = ['text', 'question'] as const;
 type ItemType = (typeof ITEM_TYPES)[number];
@@ -56,13 +57,13 @@ class ItemGroupController {
             const id = Number(req.params.id);
             const itemGroup = await prisma.itemGroup.findUnique({
                 where: { id },
-                include: { questionItems: { orderBy: { itemNumber: 'asc' } } },
+                include: { questionItems: { orderBy: { itemNumber: 'asc' }, include: WITH_AUDIO } },
             });
             if (!itemGroup) {
                 res.status(404).send({ message: `Item group ${req.params.id} not found.` });
                 return;
             }
-            res.json(itemGroup.questionItems);
+            res.json(itemGroup.questionItems.map(questionItemJson));
         } catch (err: any) {
             res.status(500).send({ message: err.message || 'Error retrieving question items.' });
         }

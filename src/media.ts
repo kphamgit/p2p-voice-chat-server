@@ -4,7 +4,8 @@
 //
 // `media` is free text with images inline as Markdown, ![](<url>), where the
 // URL is a public S3 URL under the folder's item path, e.g.
-// images/question-items/<item id>/ (see UploadToS3.imageUploadTo). Other URLs,
+// images/question-items/<item id>/ (under dev/ from a development server, see
+// S3_PREFIX; see UploadToS3.imageUploadTo). Other URLs,
 // e.g. a YouTube link, are left alone. The text is the source of truth: an
 // image is in use exactly when its URL appears in the item's media.
 //
