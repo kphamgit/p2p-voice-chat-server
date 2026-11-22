@@ -1,6 +1,6 @@
 // ElevenLabs text-to-speech (ported from the django-no-redis
-// api.views.generate_eleven_lab_audio_and_save_to_azure view, minus Azure:
-// the audio is returned, and question audio is stored in S3 like Google's).
+// api.views.generate_eleven_lab_audio_and_save_to_azure view; here the audio
+// is returned, and question audio is stored in S3 like Google's).
 //
 // Uses the HTTP API directly (no SDK). Set ELEVENLABS_API_KEY; optionally
 // ELEVENLABS_VOICE (a voice id) and ELEVENLABS_MODEL.

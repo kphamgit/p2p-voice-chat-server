@@ -24,7 +24,7 @@ function audioUpload(req: Request, res: Response, next: NextFunction): void {
 // Speech recognition (see src/controllers/speech.ts).
 router.post('/transcribe', audioUpload, SpeechController.transcribe);
 router.post('/transcribe-and-save', audioUpload, SpeechController.transcribeAndSave);
-// Pronunciation scoring for Shadowing questions (Azure).
-router.post('/pronunciation', audioUpload, SpeechController.pronunciation);
+// Shadowing scoring (VoiceAnalyzer).
+router.post('/shadowing', audioUpload, SpeechController.shadowing);
 
 export default router;

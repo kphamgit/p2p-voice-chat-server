@@ -3,8 +3,11 @@
 //   VOICE_ANALYZER_URL      its base URL (default http://127.0.0.1:8001, a local run)
 //   VOICE_ANALYZER_API_KEY  sent as X-API-Key; needed through its Cloudflare tunnel,
 //                           not for a local run (its api_key.txt)
-// For now only POST /api/analyze-reference: what it measures in a reference
-// audio alone, for the admin's "Analyze reference audio" (Shadowing questions).
+// Two calls:
+//   POST /api/analyze-reference  what it measures in a reference audio alone,
+//                                for the admin's "Analyze reference audio"
+//   POST /api/evaluate           a student's recording scored against the
+//                                question's audio (Shadowing, format 9)
 
 import { prisma } from './prisma.js';
 
@@ -20,9 +23,21 @@ export class VoiceAnalyzerError extends Error {
 
 export type StressSource = 'dictionary' | 'reference';
 
-// The analyzer's reply; words[] gets `hyphenated` added (see addHyphenation).
+// The analyze-reference reply; words[] gets `hyphenated` added (see addHyphenation).
+// A stress word in either reply (the fields addHyphenation uses).
+interface StressWord {
+    word?: string;
+    syllable_count?: number;
+    expected_pattern?: string;
+    reference_pattern?: string;
+    recorded_pattern?: string;
+    expected_stressed_syllable?: number | null;
+    reference_stressed_syllable?: number | null;
+    hyphenated?: string[] | null;
+}
+
 export interface ReferenceAnalysis {
-    words?: { word?: string; syllable_count?: number; expected_stressed_syllable?: number | null; reference_stressed_syllable?: number | null; hyphenated?: string[] | null }[];
+    words?: StressWord[];
     [key: string]: unknown;
 }
 
@@ -39,10 +54,68 @@ export async function analyzeReference(
     form.append('stress_words', stressWords);
     form.append('stress_source', stressSource);
     form.append('reference_file', new Blob([new Uint8Array(audio)], { type: 'audio/mpeg' }), 'reference.mp3');
+    const analysis = (await post('/api/analyze-reference', form, 'Analyzing the reference')) as ReferenceAnalysis;
+    await addHyphenation(analysis.words ?? []).catch((err) => console.error('❌ Spelling the syllables failed:', err));
+    return analysis;
+}
+
+// A Shadowing question's scoring options (QuestionItem.scoringOptions), the
+// keys the analyzer takes. Any missing one gets the Django app's default.
+export interface ScoringOptions {
+    targeted_words?: string;
+    strict_connected_speech?: boolean;
+    link_tolerance?: number;
+    stress_words?: string;
+    stress_contrast_ratio?: number;
+    melody_min_similarity?: number;
+    stress_source?: StressSource;
+    fall_match_ratio?: number;
+    rise_match_ratio?: number;
+}
+
+// The analyzer's verdict on a recording; word_stress_check.words[] gets
+// `hyphenated` added (see addHyphenation). Passed on to the app as is.
+export interface Evaluation {
+    word_stress_check?: { words?: StressWord[] };
+    [key: string]: unknown;
+}
+
+// `recording` (16 kHz mono WAV) as an attempt at saying `sentence` like
+// `reference` (the question's MP3), scored with `options`. Nothing is saved.
+export async function evaluateRecording(
+    sentence: string,
+    options: ScoringOptions | null,
+    reference: Buffer,
+    recording: Buffer,
+): Promise<Evaluation> {
+    const o = options ?? {};
+    const form = new FormData();
+    form.append('spoken_text', sentence);
+    form.append('targeted_words', o.targeted_words ?? '');
+    form.append('strict_connected_speech', o.strict_connected_speech === false ? 'false' : 'true');
+    form.append('fall_match_ratio', String(o.fall_match_ratio ?? 0.75));
+    form.append('rise_match_ratio', String(o.rise_match_ratio ?? 0.5));
+    form.append('link_tolerance', String(o.link_tolerance ?? 1.0));
+    form.append('stress_words', o.stress_words ?? '');
+    form.append('stress_contrast_ratio', String(o.stress_contrast_ratio ?? 0.6));
+    form.append('melody_min_similarity', String(o.melody_min_similarity ?? 0.35));
+    form.append('stress_source', o.stress_source === 'reference' ? 'reference' : 'dictionary');
+    form.append('reference_file', new Blob([new Uint8Array(reference)], { type: 'audio/mpeg' }), 'reference.mp3');
+    form.append('recorded_file', new Blob([new Uint8Array(recording)], { type: 'audio/wav' }), 'recording.wav');
+    const evaluation = (await post('/api/evaluate', form, 'The voice assessment')) as Evaluation;
+    await addHyphenation(evaluation.word_stress_check?.words ?? []).catch((err) =>
+        console.error('❌ Spelling the syllables failed:', err),
+    );
+    return evaluation;
+}
+
+// POSTs `form` to the analyzer and returns its JSON reply. Throws a
+// VoiceAnalyzerError (502) when it can't be reached or answers with an error.
+async function post(path: string, form: FormData, what: string): Promise<Record<string, unknown>> {
     const key = process.env['VOICE_ANALYZER_API_KEY'];
     let res: Response;
     try {
-        res = await fetch(`${BASE_URL}/api/analyze-reference`, {
+        res = await fetch(`${BASE_URL}${path}`, {
             method: 'POST',
             body: form,
             headers: key ? { 'X-API-Key': key } : {},
@@ -52,29 +125,28 @@ export async function analyzeReference(
         console.error(`❌ Can't reach VoiceAnalyzer at ${BASE_URL}:`, err);
         throw new VoiceAnalyzerError('Can\'t reach the voice assessment server (VoiceAnalyzer).', 502);
     }
-    const data = (await res.json().catch(() => null)) as ReferenceAnalysis | { detail?: unknown } | null;
-    if (!res.ok || !data || typeof data !== 'object') {
+    const data = (await res.json().catch(() => null)) as Record<string, unknown> | null;
+    if (!res.ok || !data || typeof data !== 'object' || Array.isArray(data)) {
         // FastAPI: {detail: "..."}, or a list of problems for a rejected request.
-        const detail = (data as { detail?: unknown } | null)?.detail;
+        const detail = data?.['detail'];
         const message = Array.isArray(detail)
             ? detail.map((d) => (d && typeof d === 'object' && 'msg' in d ? String(d.msg) : String(d))).join('; ')
             : typeof detail === 'string'
               ? detail
-              : `Analyzing the reference failed (${res.status}).`;
+              : `${what} failed (${res.status}).`;
         throw new VoiceAnalyzerError(message, 502);
     }
-    const analysis = data as ReferenceAnalysis;
-    await addHyphenation(analysis).catch((err) => console.error('❌ Spelling the syllables failed:', err));
-    return analysis;
+    return data;
 }
 
-// Adds each word's syllables as spelled (["a", "pol", "o", "gy"], or null) from
-// the dictionary's hyphenation, as the Django app does: only a split with as
+// Adds each stress word's syllables as spelled (["a", "pol", "o", "gy"], or
+// null) from the dictionary's hyphenation, as the Django app does: only a split with as
 // many parts as the analyzer found syllables; of two (noun / verb, e.g.
 // "pres-ent" / "pre-sent"), a 1st-syllable stress picks the closed one.
-async function addHyphenation(analysis: ReferenceAnalysis): Promise<void> {
-    for (const w of analysis.words ?? []) {
-        const count = w.syllable_count ?? 0;
+async function addHyphenation(words: StressWord[]): Promise<void> {
+    for (const w of words) {
+        const pattern = (w.expected_pattern || w.reference_pattern || w.recorded_pattern || '').split(/\s+/).filter(Boolean);
+        const count = w.syllable_count || pattern.length;
         const word = String(w.word ?? '').replace(/[^A-Za-z']/g, '').toLowerCase();
         w.hyphenated = null;
         if (count < 2 || !word) continue;

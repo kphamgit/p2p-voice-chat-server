@@ -21,7 +21,6 @@ import dictionaryRoutes from "./routes/dictionary.js";
 import audioRoutes from "./routes/audio.js";
 import cardRoutes from "./routes/card.js";
 import speechRoutes from "./routes/speech.js";
-import speechAssessmentRoutes from "./routes/speechAssessment.js";
 import userRoutes from "./routes/user.js";
 import { requireAuth } from "./middleware/requireAuth.js";
 import { mountRoutes, printRoutes } from "./listRoutes.js";
@@ -73,9 +72,6 @@ mountRoutes(app, "/cards", requireAuth, cardRoutes);
 
 // OpenAI speech recognition of spoken answers, plus a Vietnamese translation (auth-gated: billed).
 mountRoutes(app, "/speech", requireAuth, speechRoutes);
-
-// Admin: students' recordings in S3, scored by TonePerfect (billed per try).
-mountRoutes(app, "/speech-assessment", requireAuth, speechAssessmentRoutes);
 
 const port = Number(process.env["PORT"]) || 3000;
 
