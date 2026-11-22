@@ -298,15 +298,15 @@ model ReviewLog {
   @@index([cardId])
 }
 
-// Every audio a question can play: one MP3 in S3, public, at
-// question-audios/<uuid>.mp3 (dev/question-audios/ from a development server,
+// The audio library: every audio a question can play, one MP3 in S3, public, at
+// audios/library/<uuid>.mp3 (dev/audios/library/ from a development server,
 // see S3_PREFIX in src/controllers/upload_to_s3.ts), never overwritten (regenerating makes a new
 // one). Made only by the admin's Generate voice (POST /audios). Questions point
 // to it (QuestionItem.audioId / trailingAudioId), several may share one, and
-// the database refuses to delete one still in use. The library (the item
-// form's "From library") is the audios
-// with inLibrary set. An audio that no question uses and isn't in the library
-// is deleted with its file after a day (deleteUnusedAudios).
+// the database refuses to delete one still in use. An audio is kept for good
+// once `kept` is set (the item form's "Keep for reuse"); the kept ones are what
+// "Use audio from: The library" searches. One that isn't kept and that no
+// question uses is deleted with its file after a day (deleteUnusedAudios).
 model Audio {
   id          Int      @id @default(autoincrement())
   s3Key       String   @unique @map("s3_key")
@@ -315,8 +315,8 @@ model Audio {
   provider    String // google | elevenlabs
   voice       String // the provider's voice id, e.g. en-US-Chirp3-HD-Charon, or an ElevenLabs id
   speed       Float? // the speaking rate asked for (1 is normal), null for the default
-  inLibrary   Boolean  @default(false) @map("in_library")
-  keywords    String[] @default([]) // for searching the library: lower-case, trimmed, each at most 50 characters
+  kept        Boolean  @default(false) // chosen for reuse: searchable, never deleted automatically
+  keywords    String[] @default([]) // for searching the kept audio: lower-case, trimmed, each at most 50 characters
   createdById Int?     @map("created_by_id")
   createdBy   User?    @relation(fields: [createdById], references: [id], onDelete: SetNull)
   createdAt   DateTime @default(now()) @map("created_at")
@@ -324,5 +324,5 @@ model Audio {
   questionAudios    QuestionItem[] @relation("QuestionAudio")
   questionTrailings QuestionItem[] @relation("QuestionTrailingAudio")
 
-  @@index([inLibrary, createdAt])
+  @@index([kept, createdAt])
 }

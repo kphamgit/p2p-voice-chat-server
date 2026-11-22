@@ -7,9 +7,9 @@ import { analyzeReference, VoiceAnalyzerError } from '../voiceAnalyzer.js';
 import UploadToS3 from './upload_to_s3.js';
 
 // Question audio, for the admin's item form (see src/audio.ts): generate one,
-// search the library, add one to the library, download one, analyze one.
+// search the kept ones, keep one, download one, analyze one.
 
-// Library searches are capped.
+// Searches are capped.
 const MAX_RESULTS = 200;
 
 // The :id audio, or null after sending the 404.
@@ -24,7 +24,7 @@ class AudioController {
     // POST /audios — speak { text, provider (google | elevenlabs), voice?, speed? }
     // and keep it. text may hold SSML / ElevenLabs tags; the audio's text is
     // the words only. → the audio (201). Unless a question uses it or it's
-    // added to the library, it's deleted after a day.
+    // kept, it's deleted after a day.
     public async create(req: Request, res: Response): Promise<void> {
         const { text, provider = 'google', voice, speed } = (req.body ?? {}) as Record<string, unknown>;
         if (typeof text !== 'string' || (voice !== undefined && voice !== null && typeof voice !== 'string')) {
@@ -58,10 +58,10 @@ class AudioController {
         }
     }
 
-    // GET /audios?q=apology average — the library, newest first. An audio
+    // GET /audios?q=apology average — the kept audios, newest first. An audio
     // matches when every word of q is in its text or one of its keywords
     // (case-insensitive, partial words count: "apolog" finds "apology"). No q:
-    // the whole library. At most 200. → { audios: [...] }
+    // all of them. At most 200. → { audios: [...] }
     public async search(req: Request, res: Response): Promise<void> {
         const terms = String(req.query.q ?? '').split(/\s+/).filter(Boolean);
         try {
@@ -72,12 +72,12 @@ class AudioController {
                     return Prisma.sql`(text ILIKE ${like} OR array_to_string(keywords, ' ') ILIKE ${like})`;
                 });
                 const found = await prisma.$queryRaw<{ id: number }[]>`
-                    SELECT id FROM "Audio" WHERE in_library AND ${Prisma.join(conditions, ' AND ')}
+                    SELECT id FROM "Audio" WHERE kept AND ${Prisma.join(conditions, ' AND ')}
                     ORDER BY created_at DESC LIMIT ${MAX_RESULTS}`;
                 ids = found.map((r) => r.id);
             }
             const rows = await prisma.audio.findMany({
-                where: { inLibrary: true, ...(ids && { id: { in: ids } }) },
+                where: { kept: true, ...(ids && { id: { in: ids } }) },
                 orderBy: { createdAt: 'desc' },
                 take: MAX_RESULTS,
             });
@@ -88,13 +88,13 @@ class AudioController {
         }
     }
 
-    // PATCH /audios/:id — { inLibrary?, keywords? ("apology, average" or a list) }.
-    // Taking an audio out of the library never deletes it while a question uses it.
+    // PATCH /audios/:id — { kept?, keywords? ("apology, average" or a list) }.
+    // Unkeeping an audio never deletes it while a question uses it.
     // → the audio.
     public async update(req: Request, res: Response): Promise<void> {
-        const { inLibrary, keywords } = (req.body ?? {}) as Record<string, unknown>;
-        if (inLibrary !== undefined && typeof inLibrary !== 'boolean') {
-            res.status(400).send({ message: 'inLibrary must be true or false.' });
+        const { kept, keywords } = (req.body ?? {}) as Record<string, unknown>;
+        if (kept !== undefined && typeof kept !== 'boolean') {
+            res.status(400).send({ message: 'kept must be true or false.' });
             return;
         }
         if (keywords !== undefined && typeof keywords !== 'string' && !Array.isArray(keywords)) {
@@ -104,7 +104,7 @@ class AudioController {
         if (!(await findAudio(req, res))) return;
         const audio = await prisma.audio.update({
             where: { id: Number(req.params.id) },
-            data: { inLibrary, keywords: keywords === undefined ? undefined : keywordsFrom(keywords) },
+            data: { kept, keywords: keywords === undefined ? undefined : keywordsFrom(keywords) },
         });
         res.json(audioJson(audio));
     }

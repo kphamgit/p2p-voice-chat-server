@@ -1,11 +1,12 @@
-// Question audio: the Audio table and its MP3s in S3 (see the Audio model in
+// The audio library: the Audio table and its MP3s in S3 (see the Audio model in
 // prisma/schema.prisma). The one way an audio comes into existence is
 // createAudio (the admin's Generate voice); questions point to audios by id,
-// and may share one; the library is the audios with inLibrary set.
+// and may share one. An audio is kept for good once `kept` is set; one that
+// isn't kept and that no question uses is deleted after a day.
 //
 // The MP3s are public (the bucket policy grants s3:GetObject on
-// question-audios/* and dev/question-audios/*), at question-audios/<uuid>.mp3
-// (dev/question-audios/<uuid>.mp3 from a development server, see S3_PREFIX),
+// audios/library/* and dev/audios/library/*), at audios/library/<uuid>.mp3
+// (dev/audios/library/<uuid>.mp3 from a development server, see S3_PREFIX),
 // and never overwritten.
 
 import { randomUUID } from 'node:crypto';
@@ -14,9 +15,9 @@ import UploadToS3, { S3_PREFIX } from './controllers/upload_to_s3.js';
 import { prisma } from './prisma.js';
 import { synthesizeSpeech, voiceFor, type TtsProvider } from './tts.js';
 
-export const AUDIO_PREFIX = `${S3_PREFIX}question-audios/`;
+export const AUDIO_PREFIX = `${S3_PREFIX}audios/library/`;
 
-// An audio unused for this long (no question, not in the library) is deleted.
+// An audio unused for this long (no question, not kept) is deleted.
 const UNUSED_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
 // What an audio says, as students see it: any <tag> (SSML, ElevenLabs breaks)
@@ -50,7 +51,7 @@ export function audioJson(audio: Audio) {
         provider: audio.provider,
         voice: audio.voice,
         speed: audio.speed,
-        inLibrary: audio.inLibrary,
+        kept: audio.kept,
         keywords: audio.keywords,
         createdAt: audio.createdAt.toISOString(),
     };
@@ -89,12 +90,12 @@ export async function createAudio(
     }
 }
 
-// Delete the audios (rows and MP3s) that no question uses, aren't in the
-// library, and are more than a day old: voices generated in a form that was
+// Delete the audios (rows and MP3s) that no question uses, aren't kept, and
+// are more than a day old: voices generated in a form that was
 // never saved, voices a regeneration replaced, and those of deleted questions.
 export async function deleteUnusedAudios(): Promise<void> {
     const unused = {
-        inLibrary: false,
+        kept: false,
         createdAt: { lt: new Date(Date.now() - UNUSED_MAX_AGE_MS) },
         questionAudios: { none: {} },
         questionTrailings: { none: {} },

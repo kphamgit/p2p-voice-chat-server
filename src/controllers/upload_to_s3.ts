@@ -63,8 +63,8 @@ class UploadToS3 {
     };
 
     // --- Public files (item images and question audio) ------------------------
-    // Everything under images/ and question-audios/ (and dev/images/ and
-    // dev/question-audios/, see S3_PREFIX) is meant to be publicly readable (a
+    // Everything under images/ and audios/library/ (and dev/images/ and
+    // dev/audios/library/, see S3_PREFIX) is meant to be publicly readable (a
     // bucket policy grants s3:GetObject on them), so clients load these by
     // plain URL; recordings (RECORDINGS_PREFIX) stay private and use presigned
     // URLs.
