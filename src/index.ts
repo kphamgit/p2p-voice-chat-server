@@ -63,7 +63,7 @@ mountRoutes(app, "/recordings", requireAuth, recordingRoutes);
 // Short-lived Metered TURN credentials for voice calls (secret key stays here).
 mountRoutes(app, "/turn-credentials", requireAuth, turnRoutes);
 
-// Google text-to-speech (auth-gated: every request is billed).
+// The text-to-speech voice list, for the admin's voice pickers.
 mountRoutes(app, "/tts", requireAuth, ttsRoutes);
 mountRoutes(app, "/dictionary", requireAuth, dictionaryRoutes);
 // Question audio (generated voices and the library), for the admin's item form.

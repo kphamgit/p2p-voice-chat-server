@@ -1,13 +1,14 @@
 import { Request, Response } from 'express';
 import { Prisma } from '../../generated/prisma/client.js';
-import { audioJson, createAudio, keywordsFrom } from '../audio.js';
+import { AUDIO_PREFIX, audioJson, createAudio, keywordsFrom } from '../audio.js';
 import { prisma } from '../prisma.js';
 import { isTtsProvider, TtsInputError } from '../tts.js';
 import { analyzeReference, VoiceAnalyzerError } from '../voiceAnalyzer.js';
 import UploadToS3 from './upload_to_s3.js';
 
 // Question audio, for the admin's item form (see src/audio.ts): generate one,
-// search the kept ones, keep one, download one, analyze one.
+// search the kept ones, keep one, download one, analyze one. And the admin's
+// "Manage Audios Library" tab: list the library folder's files, delete one.
 
 // Searches are capped.
 const MAX_RESULTS = 200;
@@ -157,6 +158,79 @@ class AudioController {
             console.error('❌ Analyzing the reference failed:', err);
             res.status(500).send({ message: `Analyzing the reference failed: ${err.message}` });
         }
+    }
+
+    // GET /audios/library — every file in the library folder (AUDIO_PREFIX),
+    // newest first: { prefix, files: [{ key, url, size, lastModified, audio }] }
+    // where audio is its Audio row (with questionCount, how many questions use
+    // it) or null for a file no row points to. Rows whose file is missing come
+    // last, with size and lastModified null.
+    public async library(_req: Request, res: Response): Promise<void> {
+        let objects: { key: string; lastModified: Date; size: number }[];
+        try {
+            objects = await UploadToS3.listObjects(AUDIO_PREFIX);
+        } catch (err) {
+            console.error('❌ Listing the audio library failed:', err);
+            res.status(502).send({ message: "The library folder couldn't be listed from S3." });
+            return;
+        }
+        const rows = await prisma.audio.findMany({
+            where: { s3Key: { startsWith: AUDIO_PREFIX } },
+            include: { _count: { select: { questionAudios: true, questionTrailings: true } } },
+        });
+        const byKey = new Map(rows.map((r) => [r.s3Key, r]));
+        const audioOf = (r: (typeof rows)[number] | undefined) =>
+            r ? { ...audioJson(r), questionCount: r._count.questionAudios + r._count.questionTrailings } : null;
+        const files: { key: string; url: string; size: number | null; lastModified: string | null; audio: ReturnType<typeof audioOf> }[] = objects
+            .sort((a, b) => b.lastModified.getTime() - a.lastModified.getTime())
+            .map((o) => ({
+                key: o.key,
+                url: UploadToS3.publicUrl(o.key),
+                size: o.size,
+                lastModified: o.lastModified.toISOString(),
+                audio: audioOf(byKey.get(o.key)),
+            }));
+        const listed = new Set(objects.map((o) => o.key));
+        for (const r of rows) {
+            if (!listed.has(r.s3Key)) {
+                files.push({ key: r.s3Key, url: UploadToS3.publicUrl(r.s3Key), size: null, lastModified: null, audio: audioOf(r) });
+            }
+        }
+        res.json({ prefix: AUDIO_PREFIX, files });
+    }
+
+    // DELETE /audios/library?key=<s3 key> — delete one library file now. If an
+    // Audio row points to it, the row goes too, first (409 while a question
+    // uses it: take it off the question first). Only keys in the library
+    // folder. 204.
+    public async deleteLibraryFile(req: Request, res: Response): Promise<void> {
+        const key = typeof req.query['key'] === 'string' ? req.query['key'] : '';
+        if (!key.startsWith(AUDIO_PREFIX) || key.length === AUDIO_PREFIX.length || key.slice(AUDIO_PREFIX.length).includes('/')) {
+            res.status(400).send({ message: `key must be a file in ${AUDIO_PREFIX}.` });
+            return;
+        }
+        const row = await prisma.audio.findUnique({ where: { s3Key: key } });
+        if (row) {
+            try {
+                await prisma.audio.delete({ where: { id: row.id } });
+            } catch (err) {
+                // onDelete: Restrict: a question still points to it.
+                if (err instanceof Prisma.PrismaClientKnownRequestError && ['P2003', 'P2014'].includes(err.code)) {
+                    const n = await prisma.questionItem.count({ where: { OR: [{ audioId: row.id }, { trailingAudioId: row.id }] } });
+                    res.status(409).send({ message: `${n} question${n === 1 ? ' uses' : 's use'} this audio: take it off ${n === 1 ? 'that question' : 'those questions'} first.` });
+                    return;
+                }
+                throw err;
+            }
+        }
+        try {
+            await UploadToS3.deleteObject(key);
+        } catch (err) {
+            console.error(`❌ Deleting ${key} failed:`, err);
+            res.status(502).send({ message: row ? 'The audio was deleted, but its file couldn\'t be deleted from S3.' : "The file couldn't be deleted from S3." });
+            return;
+        }
+        res.status(204).end();
     }
 }
 
