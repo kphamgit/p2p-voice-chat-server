@@ -28,7 +28,7 @@ import { verifyAuthToken } from "./jwt.js";
 import { prisma } from "./prisma.js";
 import { getTurnIceServers, isTurnConfigured } from "./turn.js";
 import { deleteStalePendingImages } from "./media.js";
-import { deleteUnusedAudios } from "./audio.js";
+import { deleteStrayFiles, deleteUnusedAudios } from "./audio.js";
 import { deleteOldRefreshTokens } from "./refreshTokens.js";
 
 const app = express();
@@ -98,12 +98,15 @@ if (isTurnConfigured()) {
 }
 
 // Delete images pasted into item forms that were never saved (they wait in
-// S3's pending folders for a day), and audios that nothing uses (see
-// deleteUnusedAudios). Runs at startup and every 6 hours; unref() so the timer
+// S3's pending folders for a day), audios that nothing uses (see
+// deleteUnusedAudios), and library files no audio row points to
+// (deleteStrayFiles). Runs at startup and every 6 hours; unref() so the timer
 // never keeps the process alive on shutdown.
 function sweepUnusedFiles() {
   deleteStalePendingImages().catch((err) => console.error("❌ Pending image cleanup failed (will retry):", err));
-  deleteUnusedAudios().catch((err) => console.error("❌ Unused audio cleanup failed (will retry):", err));
+  deleteUnusedAudios()
+    .then(deleteStrayFiles)
+    .catch((err) => console.error("❌ Unused audio cleanup failed (will retry):", err));
 }
 sweepUnusedFiles();
 setInterval(sweepUnusedFiles, 6 * 60 * 60 * 1000).unref();

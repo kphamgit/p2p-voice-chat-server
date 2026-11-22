@@ -1,6 +1,6 @@
 import { Request, Response } from 'express';
-import { Prisma } from '../../generated/prisma/client.js';
-import { AUDIO_PREFIX, audioJson, createAudio, keywordsFrom } from '../audio.js';
+import { Prisma, type Audio } from '../../generated/prisma/client.js';
+import { AUDIO_PREFIX, audioJson, checkLibrary, createAudio, deleteAudio, keywordsFrom } from '../audio.js';
 import { prisma } from '../prisma.js';
 import { isTtsProvider, TtsInputError } from '../tts.js';
 import { analyzeReference, VoiceAnalyzerError } from '../voiceAnalyzer.js';
@@ -8,7 +8,8 @@ import UploadToS3 from './upload_to_s3.js';
 
 // Question audio, for the admin's item form (see src/audio.ts): generate one,
 // search the kept ones, keep one, download one, analyze one. And the admin's
-// "Manage Audios Library" tab: list the library folder's files, delete one.
+// "Manage Audios Library" tab: list the audio rows, delete one, and check the
+// S3 folder against the rows (see checkLibrary).
 
 // Searches are capped.
 const MAX_RESULTS = 200;
@@ -19,6 +20,30 @@ async function findAudio(req: Request, res: Response) {
     const audio = Number.isInteger(id) ? await prisma.audio.findUnique({ where: { id } }) : null;
     if (!audio) res.status(404).send({ message: 'That audio no longer exists.' });
     return audio;
+}
+
+// The ids of the audios (kept, not kept, or either) whose text or keywords
+// contain every term (case-insensitive, partial words count), newest first.
+async function matchingIds(terms: string[], kept?: boolean): Promise<number[]> {
+    const conditions = terms.map((t) => {
+        const like = `%${t.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
+        return Prisma.sql`(text ILIKE ${like} OR array_to_string(keywords, ' ') ILIKE ${like})`;
+    });
+    if (kept !== undefined) conditions.push(kept ? Prisma.sql`kept` : Prisma.sql`NOT kept`);
+    const found = await prisma.$queryRaw<{ id: number }[]>`
+        SELECT id FROM "Audio" WHERE ${Prisma.join(conditions, ' AND ')}
+        ORDER BY created_at DESC LIMIT ${MAX_RESULTS}`;
+    return found.map((r) => r.id);
+}
+
+// An audio for the Manage Audios Library tab: with how many questions use it
+// and who made it.
+function libraryJson(r: Audio & { createdBy: { name: string } | null; _count: { questionAudios: number; questionTrailings: number } }) {
+    return {
+        ...audioJson(r),
+        questionCount: r._count.questionAudios + r._count.questionTrailings,
+        createdBy: r.createdBy?.name ?? null,
+    };
 }
 
 class AudioController {
@@ -66,17 +91,7 @@ class AudioController {
     public async search(req: Request, res: Response): Promise<void> {
         const terms = String(req.query.q ?? '').split(/\s+/).filter(Boolean);
         try {
-            let ids: number[] | undefined;
-            if (terms.length) {
-                const conditions = terms.map((t) => {
-                    const like = `%${t.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
-                    return Prisma.sql`(text ILIKE ${like} OR array_to_string(keywords, ' ') ILIKE ${like})`;
-                });
-                const found = await prisma.$queryRaw<{ id: number }[]>`
-                    SELECT id FROM "Audio" WHERE kept AND ${Prisma.join(conditions, ' AND ')}
-                    ORDER BY created_at DESC LIMIT ${MAX_RESULTS}`;
-                ids = found.map((r) => r.id);
-            }
+            const ids = terms.length ? await matchingIds(terms, true) : undefined;
             const rows = await prisma.audio.findMany({
                 where: { kept: true, ...(ids && { id: { in: ids } }) },
                 orderBy: { createdAt: 'desc' },
@@ -160,74 +175,102 @@ class AudioController {
         }
     }
 
-    // GET /audios/library — every file in the library folder (AUDIO_PREFIX),
-    // newest first: { prefix, files: [{ key, url, size, lastModified, audio }] }
-    // where audio is its Audio row (with questionCount, how many questions use
-    // it) or null for a file no row points to. Rows whose file is missing come
-    // last, with size and lastModified null.
-    public async library(_req: Request, res: Response): Promise<void> {
-        let objects: { key: string; lastModified: Date; size: number }[];
+    // GET /audios/library?q=words&kept=kept|not_kept|all — the audio rows,
+    // newest first (kept: default "all"). q as in GET /audios. At most 200.
+    // → { prefix, audios: [audio + questionCount + createdBy (name or null)] }
+    public async library(req: Request, res: Response): Promise<void> {
+        const keptParam = String(req.query.kept ?? 'all');
+        const kept = keptParam === 'kept' ? true : keptParam === 'not_kept' ? false : undefined;
+        const terms = String(req.query.q ?? '').split(/\s+/).filter(Boolean);
         try {
-            objects = await UploadToS3.listObjects(AUDIO_PREFIX);
-        } catch (err) {
+            const ids = terms.length ? await matchingIds(terms, kept) : undefined;
+            const rows = await prisma.audio.findMany({
+                where: { ...(kept !== undefined && { kept }), ...(ids && { id: { in: ids } }) },
+                orderBy: { createdAt: 'desc' },
+                take: MAX_RESULTS,
+                include: {
+                    createdBy: { select: { name: true } },
+                    _count: { select: { questionAudios: true, questionTrailings: true } },
+                },
+            });
+            res.json({ prefix: AUDIO_PREFIX, audios: rows.map(libraryJson) });
+        } catch (err: any) {
             console.error('❌ Listing the audio library failed:', err);
-            res.status(502).send({ message: "The library folder couldn't be listed from S3." });
-            return;
+            res.status(500).send({ message: `Listing the library failed: ${err.message}` });
         }
-        const rows = await prisma.audio.findMany({
-            where: { s3Key: { startsWith: AUDIO_PREFIX } },
-            include: { _count: { select: { questionAudios: true, questionTrailings: true } } },
-        });
-        const byKey = new Map(rows.map((r) => [r.s3Key, r]));
-        const audioOf = (r: (typeof rows)[number] | undefined) =>
-            r ? { ...audioJson(r), questionCount: r._count.questionAudios + r._count.questionTrailings } : null;
-        const files: { key: string; url: string; size: number | null; lastModified: string | null; audio: ReturnType<typeof audioOf> }[] = objects
-            .sort((a, b) => b.lastModified.getTime() - a.lastModified.getTime())
-            .map((o) => ({
-                key: o.key,
-                url: UploadToS3.publicUrl(o.key),
-                size: o.size,
-                lastModified: o.lastModified.toISOString(),
-                audio: audioOf(byKey.get(o.key)),
-            }));
-        const listed = new Set(objects.map((o) => o.key));
-        for (const r of rows) {
-            if (!listed.has(r.s3Key)) {
-                files.push({ key: r.s3Key, url: UploadToS3.publicUrl(r.s3Key), size: null, lastModified: null, audio: audioOf(r) });
-            }
-        }
-        res.json({ prefix: AUDIO_PREFIX, files });
     }
 
-    // DELETE /audios/library?key=<s3 key> — delete one library file now. If an
-    // Audio row points to it, the row goes too, first (409 while a question
-    // uses it: take it off the question first). Only keys in the library
-    // folder. 204.
-    public async deleteLibraryFile(req: Request, res: Response): Promise<void> {
+    // GET /audios/library/check — the S3 folder compared with the rows:
+    // { prefix, strayFiles: [{ key, url, size, lastModified }] (files no row
+    // points to, oldest first), missingFiles: [audio + questionCount +
+    // createdBy] (rows whose file isn't in S3) }. Lists the whole folder, so
+    // it's run on request, not with every page load.
+    public async check(_req: Request, res: Response): Promise<void> {
+        try {
+            const { strayFiles, missingFiles } = await checkLibrary();
+            const rows = await prisma.audio.findMany({
+                where: { id: { in: missingFiles.map((r) => r.id) } },
+                orderBy: { createdAt: 'desc' },
+                include: {
+                    createdBy: { select: { name: true } },
+                    _count: { select: { questionAudios: true, questionTrailings: true } },
+                },
+            });
+            res.json({
+                prefix: AUDIO_PREFIX,
+                strayFiles: strayFiles.map((f) => ({
+                    key: f.key,
+                    url: UploadToS3.publicUrl(f.key),
+                    size: f.size,
+                    lastModified: f.lastModified.toISOString(),
+                })),
+                missingFiles: rows.map(libraryJson),
+            });
+        } catch (err: any) {
+            console.error('❌ Checking the audio library failed:', err);
+            res.status(502).send({ message: `Checking the library against S3 failed: ${err.message}` });
+        }
+    }
+
+    // DELETE /audios/:id — delete the audio now: its row, then its file. 409
+    // while a question uses it. 204.
+    public async remove(req: Request, res: Response): Promise<void> {
+        const audio = await findAudio(req, res);
+        if (!audio) return;
+        try {
+            await deleteAudio(audio);
+        } catch (err) {
+            if (err instanceof Prisma.PrismaClientKnownRequestError && ['P2003', 'P2014'].includes(err.code)) {
+                const n = await prisma.questionItem.count({ where: { OR: [{ audioId: audio.id }, { trailingAudioId: audio.id }] } });
+                res.status(409).send({ message: `${n} question${n === 1 ? ' uses' : 's use'} this audio: take it off ${n === 1 ? 'that question' : 'those questions'} first.` });
+                return;
+            }
+            console.error(`❌ Deleting audio ${audio.id} failed:`, err);
+            res.status(502).send({ message: 'The audio row was deleted, but its file couldn\'t be deleted from S3.' });
+            return;
+        }
+        res.status(204).end();
+    }
+
+    // DELETE /audios/library/stray?key=<s3 key> — delete a library file that
+    // no row points to (one GET /audios/library/check listed). Refused (409)
+    // if a row points to it: delete that audio instead. 204.
+    public async deleteStrayFile(req: Request, res: Response): Promise<void> {
         const key = typeof req.query['key'] === 'string' ? req.query['key'] : '';
-        if (!key.startsWith(AUDIO_PREFIX) || key.length === AUDIO_PREFIX.length || key.slice(AUDIO_PREFIX.length).includes('/')) {
+        const name = key.slice(AUDIO_PREFIX.length);
+        if (!key.startsWith(AUDIO_PREFIX) || !name || name.includes('/')) {
             res.status(400).send({ message: `key must be a file in ${AUDIO_PREFIX}.` });
             return;
         }
-        const row = await prisma.audio.findUnique({ where: { s3Key: key } });
-        if (row) {
-            try {
-                await prisma.audio.delete({ where: { id: row.id } });
-            } catch (err) {
-                // onDelete: Restrict: a question still points to it.
-                if (err instanceof Prisma.PrismaClientKnownRequestError && ['P2003', 'P2014'].includes(err.code)) {
-                    const n = await prisma.questionItem.count({ where: { OR: [{ audioId: row.id }, { trailingAudioId: row.id }] } });
-                    res.status(409).send({ message: `${n} question${n === 1 ? ' uses' : 's use'} this audio: take it off ${n === 1 ? 'that question' : 'those questions'} first.` });
-                    return;
-                }
-                throw err;
-            }
+        if (await prisma.audio.findUnique({ where: { s3Key: key }, select: { id: true } })) {
+            res.status(409).send({ message: 'An audio row points to this file: delete that audio instead.' });
+            return;
         }
         try {
             await UploadToS3.deleteObject(key);
         } catch (err) {
             console.error(`❌ Deleting ${key} failed:`, err);
-            res.status(502).send({ message: row ? 'The audio was deleted, but its file couldn\'t be deleted from S3.' : "The file couldn't be deleted from S3." });
+            res.status(502).send({ message: "The file couldn't be deleted from S3." });
             return;
         }
         res.status(204).end();
