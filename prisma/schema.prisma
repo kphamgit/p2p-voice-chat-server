@@ -110,7 +110,8 @@ model QuestionItem {
   // only applies to question format 9 (Shadowing): how VoiceAnalyzer scores the student's recording,
   // as the phuyenenglish.com teacher panel's Scoring options send them: { targeted_words,
   // strict_connected_speech, link_tolerance, stress_words, stress_contrast_ratio,
-  // melody_min_similarity, stress_source, fall_match_ratio, rise_match_ratio }. Null = not set.
+  // melody_min_similarity, stress_source, fall_match_ratio, rise_match_ratio, stress_words_ipa? (display
+  // only: the stress words' IPA, which VoiceAnalyzer syllabifies) }. Null = not set.
   scoringOptions             Json?     @map("scoring_options")
   hideText                   Boolean   @default(false) @map("hide_text") // only applies to question format 9 (Shadowing): the student app hides the sentence until the student has tried saying it from the audio alone
   itemGroupId                Int       @map("item_group_id") // FK column → ItemGroup.id

@@ -144,12 +144,23 @@ class AudioController {
     // POST /audios/:id/analyze — "Analyze reference audio" on a Shadowing
     // question: what VoiceAnalyzer measures in this audio alone (saying its
     // text) for { stressWords ("accept, apology"), stressSource (dictionary |
-    // reference) }. Nothing is saved. → VoiceAnalyzer's reply, with each
-    // word's spelled syllables.
+    // reference), stressWordsIpa? (display only: "accept: əkˈsept, apology:
+    // əˈpɒlədʒi", or an object { accept: "əkˈsept" }) }. Nothing is saved.
+    // → VoiceAnalyzer's reply, with each word's spelled syllables (hyphenated)
+    // and its IPA syllables (syllabified).
     public async analyze(req: Request, res: Response): Promise<void> {
-        const { stressWords, stressSource } = (req.body ?? {}) as Record<string, unknown>;
+        const { stressWords, stressSource, stressWordsIpa } = (req.body ?? {}) as Record<string, unknown>;
         if (typeof stressWords !== 'string' || !stressWords.trim()) {
             res.status(400).send({ message: 'Type a stress word first.' });
+            return;
+        }
+        let ipa = '';
+        if (typeof stressWordsIpa === 'string') {
+            ipa = stressWordsIpa.trim();
+        } else if (stressWordsIpa && typeof stressWordsIpa === 'object' && !Array.isArray(stressWordsIpa)) {
+            ipa = JSON.stringify(stressWordsIpa);
+        } else if (stressWordsIpa !== undefined && stressWordsIpa !== null) {
+            res.status(400).send({ message: 'stressWordsIpa must be text or an object of word → IPA.' });
             return;
         }
         const audio = await findAudio(req, res);
@@ -164,7 +175,7 @@ class AudioController {
         }
         try {
             const source = stressSource === 'reference' ? 'reference' : 'dictionary';
-            res.json(await analyzeReference(bytes, audio.text, stressWords.trim(), source));
+            res.json(await analyzeReference(bytes, audio.text, stressWords.trim(), source, ipa));
         } catch (err: any) {
             if (err instanceof VoiceAnalyzerError) {
                 res.status(err.status).send({ message: err.message });

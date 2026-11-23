@@ -23,6 +23,20 @@ export class VoiceAnalyzerError extends Error {
 
 export type StressSource = 'dictionary' | 'reference';
 
+// A stress word's syllables from ipa_cmu_syllabify.py, display only: from the
+// IPA sent for it (source "ipa"), else the CMU dictionary in US IPA ("cmu"),
+// else null. matches_cmu false: the analyzer measured cmu_syllable_count
+// syllables, so these don't line up with the melody chart's slots.
+export interface Syllabified {
+    source: 'ipa' | 'cmu' | null;
+    ipa: string | null; // the IPA sent for the word
+    syllabified: string | null; // e.g. "ˈvɒ-li-bɔːl"
+    syllable_count: number | null;
+    syllables: { text: string; stress: 'primary' | 'secondary' | null }[];
+    cmu_syllable_count: number | null;
+    matches_cmu: boolean | null;
+}
+
 // The analyze-reference reply; words[] gets `hyphenated` added (see addHyphenation).
 // A stress word in either reply (the fields addHyphenation uses).
 interface StressWord {
@@ -34,25 +48,31 @@ interface StressWord {
     expected_stressed_syllable?: number | null;
     reference_stressed_syllable?: number | null;
     hyphenated?: string[] | null;
+    syllabified?: Syllabified; // added by the analyzer to every stress word
 }
 
 export interface ReferenceAnalysis {
     words?: StressWord[];
+    stress_words_ipa?: Record<string, string>; // the IPA pairs as the analyzer read them
     [key: string]: unknown;
 }
 
 // What the analyzer measures in `audio` (an MP3) saying `sentence`, for the
-// given stress words ("accept, apology"). Nothing is saved.
+// given stress words ("accept, apology"). `stressWordsIpa` (optional, display
+// only): their IPA, "accept: əkˈsept, apology: əˈpɒlədʒi" or a JSON object as
+// text; each word's `syllabified` comes from it. Nothing is saved.
 export async function analyzeReference(
     audio: Buffer,
     sentence: string,
     stressWords: string,
     stressSource: StressSource,
+    stressWordsIpa = '',
 ): Promise<ReferenceAnalysis> {
     const form = new FormData();
     form.append('spoken_text', sentence);
     form.append('stress_words', stressWords);
     form.append('stress_source', stressSource);
+    form.append('stress_words_ipa', stressWordsIpa);
     form.append('reference_file', new Blob([new Uint8Array(audio)], { type: 'audio/mpeg' }), 'reference.mp3');
     const analysis = (await post('/api/analyze-reference', form, 'Analyzing the reference')) as ReferenceAnalysis;
     await addHyphenation(analysis.words ?? []).catch((err) => console.error('❌ Spelling the syllables failed:', err));
@@ -71,12 +91,13 @@ export interface ScoringOptions {
     stress_source?: StressSource;
     fall_match_ratio?: number;
     rise_match_ratio?: number;
+    stress_words_ipa?: string; // display only (see analyzeReference)
 }
 
 // The analyzer's verdict on a recording; word_stress_check.words[] gets
 // `hyphenated` added (see addHyphenation). Passed on to the app as is.
 export interface Evaluation {
-    word_stress_check?: { words?: StressWord[] };
+    word_stress_check?: { words?: StressWord[]; stress_words_ipa?: Record<string, string> };
     [key: string]: unknown;
 }
 
@@ -100,6 +121,7 @@ export async function evaluateRecording(
     form.append('stress_contrast_ratio', String(o.stress_contrast_ratio ?? 0.6));
     form.append('melody_min_similarity', String(o.melody_min_similarity ?? 0.35));
     form.append('stress_source', o.stress_source === 'reference' ? 'reference' : 'dictionary');
+    form.append('stress_words_ipa', o.stress_words_ipa ?? '');
     form.append('reference_file', new Blob([new Uint8Array(reference)], { type: 'audio/mpeg' }), 'reference.mp3');
     form.append('recorded_file', new Blob([new Uint8Array(recording)], { type: 'audio/wav' }), 'recording.wav');
     const evaluation = (await post('/api/evaluate', form, 'The voice assessment')) as Evaluation;

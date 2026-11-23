@@ -42,6 +42,9 @@ interface ScoringOptions {
     stress_source: 'dictionary' | 'reference'; // who decides the right stressed syllable
     fall_match_ratio: number; // paused check; share of the reference's fall (0.1–1)
     rise_match_ratio: number; // paused check; share of the reference's rise (0.1–1)
+    // optional, display only: the stress words' IPA, "accept: əkˈsept, apology: əˈpɒlədʒi"
+    // (or a JSON object as text); VoiceAnalyzer returns each word's syllables from it
+    stress_words_ipa?: string;
 }
 
 const SCORING_RANGES: Record<string, [number, number]> = {
@@ -60,6 +63,9 @@ function scoringOptionsProblem(value: unknown): string | null {
     for (const key of ['targeted_words', 'stress_words']) {
         if (typeof o[key] !== 'string') return `scoringOptions.${key} must be text.`;
     }
+    if (o.stress_words_ipa !== undefined && typeof o.stress_words_ipa !== 'string') {
+        return 'scoringOptions.stress_words_ipa must be text.';
+    }
     if (typeof o.strict_connected_speech !== 'boolean') return 'scoringOptions.strict_connected_speech must be true or false.';
     if (o.stress_source !== 'dictionary' && o.stress_source !== 'reference') {
         return 'scoringOptions.stress_source must be dictionary or reference.';
@@ -70,7 +76,9 @@ function scoringOptionsProblem(value: unknown): string | null {
             return `scoringOptions.${key} must be a number from ${min} to ${max}.`;
         }
     }
-    const known = new Set(['targeted_words', 'stress_words', 'strict_connected_speech', 'stress_source', ...Object.keys(SCORING_RANGES)]);
+    const known = new Set([
+        'targeted_words', 'stress_words', 'stress_words_ipa', 'strict_connected_speech', 'stress_source', ...Object.keys(SCORING_RANGES),
+    ]);
     const unknown = Object.keys(o).find((k) => !known.has(k));
     return unknown ? `scoringOptions has an unknown option: ${unknown}.` : null;
 }
