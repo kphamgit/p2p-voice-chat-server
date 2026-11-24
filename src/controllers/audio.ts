@@ -46,6 +46,15 @@ function libraryJson(r: Audio & { createdBy: { name: string } | null; _count: { 
     };
 }
 
+// A "word → value" body field (IPA or Vietnamese code) as the text the analyzer
+// takes: text as is, an object as JSON, missing as ''. null: neither.
+function wordPairsText(value: unknown): string | null {
+    if (value === undefined || value === null) return '';
+    if (typeof value === 'string') return value.trim();
+    if (typeof value === 'object' && !Array.isArray(value)) return JSON.stringify(value);
+    return null;
+}
+
 class AudioController {
     // POST /audios — speak { text, provider (google | elevenlabs), voice?, speed? }
     // and keep it. text may hold SSML / ElevenLabs tags; the audio's text is
@@ -145,22 +154,25 @@ class AudioController {
     // question: what VoiceAnalyzer measures in this audio alone (saying its
     // text) for { stressWords ("accept, apology"), stressSource (dictionary |
     // reference), stressWordsIpa? (display only: "accept: əkˈsept, apology:
-    // əˈpɒlədʒi", or an object { accept: "əkˈsept" }) }. Nothing is saved.
+    // əˈpɒlədʒi", or an object { accept: "əkˈsept" }), stressWordsViet? (display
+    // only: the Vietnamese pronunciation code, syllables separated by hyphens,
+    // same forms: { apology: "ơ-pô-lơ-di" }) }. Nothing is saved.
     // → VoiceAnalyzer's reply, with each word's spelled syllables (hyphenated)
     // and its IPA syllables (syllabified).
     public async analyze(req: Request, res: Response): Promise<void> {
-        const { stressWords, stressSource, stressWordsIpa } = (req.body ?? {}) as Record<string, unknown>;
+        const { stressWords, stressSource, stressWordsIpa, stressWordsViet } = (req.body ?? {}) as Record<string, unknown>;
         if (typeof stressWords !== 'string' || !stressWords.trim()) {
             res.status(400).send({ message: 'Type a stress word first.' });
             return;
         }
-        let ipa = '';
-        if (typeof stressWordsIpa === 'string') {
-            ipa = stressWordsIpa.trim();
-        } else if (stressWordsIpa && typeof stressWordsIpa === 'object' && !Array.isArray(stressWordsIpa)) {
-            ipa = JSON.stringify(stressWordsIpa);
-        } else if (stressWordsIpa !== undefined && stressWordsIpa !== null) {
+        const ipa = wordPairsText(stressWordsIpa);
+        if (ipa === null) {
             res.status(400).send({ message: 'stressWordsIpa must be text or an object of word → IPA.' });
+            return;
+        }
+        const viet = wordPairsText(stressWordsViet);
+        if (viet === null) {
+            res.status(400).send({ message: 'stressWordsViet must be text or an object of word → Vietnamese code.' });
             return;
         }
         const audio = await findAudio(req, res);
@@ -175,7 +187,7 @@ class AudioController {
         }
         try {
             const source = stressSource === 'reference' ? 'reference' : 'dictionary';
-            res.json(await analyzeReference(bytes, audio.text, stressWords.trim(), source, ipa));
+            res.json(await analyzeReference(bytes, audio.text, stressWords.trim(), source, ipa, viet));
         } catch (err: any) {
             if (err instanceof VoiceAnalyzerError) {
                 res.status(err.status).send({ message: err.message });

@@ -1,133 +1,14 @@
 {\rtf1\ansi\ansicpg1252\cocoartf2870
 \cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fmodern\fcharset0 CourierNewPSMT;}
 {\colortbl;\red255\green255\blue255;\red255\green255\blue255;\red0\green0\blue0;\red194\green194\blue193;
-\red255\green255\blue255;}
+}
 {\*\expandedcolortbl;;\cssrgb\c100000\c100000\c100000;\cssrgb\c0\c1\c1;\cssrgb\c80350\c80350\c79949;
-\cssrgb\c100000\c100000\c99955;}
-{\*\listtable{\list\listtemplateid1\listhybrid{\listlevel\levelnfc23\levelnfcn23\leveljc0\leveljcn0\levelfollow0\levelstartat1\levelspace360\levelindent0{\*\levelmarker \{disc\}}{\leveltext\leveltemplateid1\'01\uc0\u8226 ;}{\levelnumbers;}\fi-360\li720\lin720 }{\listname ;}\listid1}
-{\list\listtemplateid2\listhybrid{\listlevel\levelnfc23\levelnfcn23\leveljc0\leveljcn0\levelfollow0\levelstartat1\levelspace360\levelindent0{\*\levelmarker \{disc\}}{\leveltext\leveltemplateid101\'01\uc0\u8226 ;}{\levelnumbers;}\fi-360\li720\lin720 }{\listname ;}\listid2}
-{\list\listtemplateid3\listhybrid{\listlevel\levelnfc23\levelnfcn23\leveljc0\leveljcn0\levelfollow0\levelstartat1\levelspace360\levelindent0{\*\levelmarker \{disc\}}{\leveltext\leveltemplateid201\'01\uc0\u8226 ;}{\levelnumbers;}\fi-360\li720\lin720 }{\listname ;}\listid3}
-{\list\listtemplateid4\listhybrid{\listlevel\levelnfc23\levelnfcn23\leveljc0\leveljcn0\levelfollow0\levelstartat1\levelspace360\levelindent0{\*\levelmarker \{disc\}}{\leveltext\leveltemplateid301\'01\uc0\u8226 ;}{\levelnumbers;}\fi-360\li720\lin720 }{\listname ;}\listid4}}
-{\*\listoverridetable{\listoverride\listid1\listoverridecount0\ls1}{\listoverride\listid2\listoverridecount0\ls2}{\listoverride\listid3\listoverridecount0\ls3}{\listoverride\listid4\listoverridecount0\ls4}}
+}
 \margl1440\margr1440\vieww20040\viewh7960\viewkind0
 \deftab720
 \pard\pardeftab720\sa51\partightenfactor0
 
 \f0\fs24 \cf2 \cb3 \expnd0\expndtw0\kerning0
-When a browser or the frontend calls the backend, every request carries a Host header naming the server it was addressed to. Your frontend sends requests to https://django-no-redis-74168f6e866e.herokuapp.com/..., so each request arrives with Host: django-no-redis-74168f6e866e.herokuapp.com.\
-Django compares that header with ALLOWED_HOSTS on every request. If it doesn't match an entry, Django refuses the request with 400 Bad Request and never runs the view. Remove that hostname and the whole backend stops working: the API, logins, the admin, everything.\
-Why Django checks it: an attacker can send a request with a fake Host header. Django uses the host to build full URLs, such as links in password-reset emails. Without the check, an attacker could request a reset for a student's account with Host: evil.com, and the email would contain a link to their site. ALLOWED_HOSTS makes Django refuse any host it doesn't recognise.\
-How this differs from CORS:\
-\pard\tx220\tx720\pardeftab720\li720\fi-720\partightenfactor0
-\ls1\ilvl0\cf2 \cb3 \kerning1\expnd0\expndtw0 {\listtext	\uc0\u8226 	}\cb3 \expnd0\expndtw0\kerning0
-ALLOWED_HOSTS\'a0answers "what names can people use to reach\'a0this backend?" It lists the backend's own address.\
-\ls1\ilvl0\cb3 \kerning1\expnd0\expndtw0 {\listtext	\uc0\u8226 	}\cb3 \expnd0\expndtw0\kerning0
-CORS_ALLOWED_ORIGINS\'a0answers "which\'a0websites\'a0may call this backend from a browser?" It lists the frontend addresses, such as\'a0phuyenenglish.com\'a0and the Firebase site.\
-\pard\pardeftab720\sa51\partightenfactor0
-\cf2 \cb3 That's why the frontend domains belong in the CORS list and not in ALLOWED_HOSTS.\
-Locally the same check applies, which is why your .env has localhost,127.0.0.1,10.0.0.171: those are the names you use to reach the Django server on your Mac.\
-\pard\pardeftab720\qc\partightenfactor0
-\cf2 \cb3 \
-\
-\pard\pardeftab720\partightenfactor0
-\cf2 \cb3 You: but I thought django-no-redis-74168f6e866e.herokuapp.com is the name of the Heroku Django server app ?\
-12:13 PM\
-\pard\pardeftab720\qc\partightenfactor0
-\cf2 \cb3 \
-\pard\pardeftab720\partightenfactor0
-\cf2 \cb3 but I thought django-no-redis-74168f6e866e.herokuapp.com is the name of the Heroku Django server app ?\
-Thought for 2s\
-12:13 PM\
-\pard\pardeftab720\sa51\partightenfactor0
-\cf2 \cb3 It is, and that's exactly why it belongs in ALLOWED_HOSTS: the list holds the backend's own address or addresses. The naming has three layers:\
-\pard\tx220\tx720\pardeftab720\li720\fi-720\partightenfactor0
-\ls2\ilvl0\cf2 \cb3 \kerning1\expnd0\expndtw0 {\listtext	\uc0\u8226 	}\cb3 \expnd0\expndtw0\kerning0
-django-no-redis\'a0is the Heroku\'a0app name, the label you use with the\'a0heroku\'a0command (-a django-no-redis).\
-\ls2\ilvl0\cb3 \kerning1\expnd0\expndtw0 {\listtext	\uc0\u8226 	}\cb3 \expnd0\expndtw0\kerning0
-django-no-redis-74168f6e866e.herokuapp.com\'a0is the\'a0domain Heroku gave that app: the app name, a random suffix, then\'a0.herokuapp.com. It's the web address your Django server is reached at, and the one in your frontend's\'a0VITE_API_URL.\
-\ls2\ilvl0\cb3 \kerning1\expnd0\expndtw0 {\listtext	\uc0\u8226 	}\cb3 \expnd0\expndtw0\kerning0
-Django itself\'a0doesn't know which domain it's running under. Heroku forwards each request to the server process, and Django only sees the\'a0Host\'a0header the request arrived with.\
-\pard\pardeftab720\sa51\partightenfactor0
-\cf2 \cb3 So ALLOWED_HOSTS is how you tell Django its own name: "I'm reached at django-no-redis-74168f6e866e.herokuapp.com, so only accept requests addressed to that." The frontend sites in the list were never names for this server, which is why they were redundant.\
-\pard\pardeftab720\qc\partightenfactor0
-\cf2 \cb3 \
-\
-\pard\pardeftab720\partightenfactor0
-\cf2 \cb3 You: So the whole ALLOWED_HOSTS thing is about Django, not Heroku.\
-12:14 PM\
-\pard\pardeftab720\qc\partightenfactor0
-\cf2 \cb3 \
-\pard\pardeftab720\partightenfactor0
-\cf2 \cb3 So the whole ALLOWED_HOSTS  thing is about Django, not Heroku.\
-12:14 PM\
-\pard\pardeftab720\sa51\partightenfactor0
-\cf2 \cb3 Yes. ALLOWED_HOSTS is a Django setting, and Django is what checks it. You'd need it on any host (Render, AWS, your own server), and you need it locally too, which is why your .env has localhost,127.0.0.1,10.0.0.171.\
-Heroku has two smaller roles:\
-\pard\tx220\tx720\pardeftab720\li720\fi-720\partightenfactor0
-\ls3\ilvl0\cf2 \cb3 \kerning1\expnd0\expndtw0 {\listtext	\uc0\u8226 	}\cb3 \expnd0\expndtw0\kerning0
-It gives you the domain,\'a0django-no-redis-74168f6e866e.herokuapp.com, which is the name you list.\
-\ls3\ilvl0\cb3 \kerning1\expnd0\expndtw0 {\listtext	\uc0\u8226 	}\cb3 \expnd0\expndtw0\kerning0
-It stores the value\'a0as a config var instead of a\'a0.env\'a0file, the same way it stores your other settings.\
-\pard\pardeftab720\sa51\partightenfactor0
-\cf2 \cb3 Heroku itself never reads ALLOWED_HOSTS and doesn't care what's in it.\
-\pard\pardeftab720\qc\partightenfactor0
-\cf2 \cb3 \
-\
-\pard\pardeftab720\partightenfactor0
-\cf2 \cb3 You: can the same thing be said about CORS_ALLOWED_ORIGIN? Is it only about Django, too?\
-12:19 PM\
-\pard\pardeftab720\qc\partightenfactor0
-\cf2 \cb3 \
-\pard\pardeftab720\partightenfactor0
-\cf2 \cb3 can the same thing be said about CORS_ALLOWED_ORIGIN? Is it only about Django, too?\
-Thought for 1s\
-12:19 PM\
-\pard\pardeftab720\sa51\partightenfactor0
-\cf2 \cb3 Mostly. The setting CORS_ALLOWED_ORIGINS (plural) is purely on your backend, and Heroku plays the same two small roles as before. The differences are in who uses the setting and who enforces CORS:\
-\pard\tx220\tx720\pardeftab720\li720\fi-720\partightenfactor0
-\ls4\ilvl0\cf2 \cb3 \kerning1\expnd0\expndtw0 {\listtext	\uc0\u8226 	}\cb3 \expnd0\expndtw0\kerning0
-The setting belongs to an add-on package.\'a0It comes from\'a0django-cors-headers\'a0(the\'a0corsheaders\'a0entry in\'a0INSTALLED_APPS), not core Django. Django on its own knows nothing about CORS.\
-\ls4\ilvl0\cb3 \kerning1\expnd0\expndtw0 {\listtext	\uc0\u8226 	}\cb3 \expnd0\expndtw0\kerning0
-The browser enforces CORS.\'a0This is the main difference from\'a0ALLOWED_HOSTS, where Django rejects the request itself. With CORS, Django mostly just\'a0answers\'a0the request and adds a header like\'a0Access-Control-Allow-Origin: https://animated-joy-489014-v1.web.app\'a0when the calling site is on the list. The\'a0browser\'a0then reads that header and decides whether the frontend's JavaScript may see the response.\
-\pard\pardeftab720\sa51\partightenfactor0
-\cf2 \cb3 That's why your error appeared in the browser console: the Firebase origin wasn't in the list, so Django sent no such header, and the browser blocked the response.\
-It also means CORS only protects users in a browser. A script or a tool like curl ignores those headers completely and can call your API regardless. Authentication and CSRF protect your data; CORS only stops other websites from using a visitor's browser to read your API.\
-\pard\pardeftab720\qc\partightenfactor0
-\cf2 \cb3 \
-\
-\pard\pardeftab720\partightenfactor0
-\cf2 \cb3 \
 \
 \
-\
-\
-\pard\pardeftab720\partightenfactor0
-\cf2 \cb3 \
-\pard\pardeftab720\partightenfactor0
-\cf2 \cb3 \
-\pard\pardeftab720\qc\partightenfactor0
-\cf2 \cb3 \
-\pard\pardeftab720\partightenfactor0
-\cf2 \cb3 \
-\pard\pardeftab720\qc\partightenfactor0
-\cf2 \cb3 \
-\
-\pard\pardeftab720\partightenfactor0
-\cf2 \cb3 \
-59m\
-\pard\pardeftab720\qc\partightenfactor0
-\cf2 \cb3 Opus 5.5\
-Medium\
-\pard\pardeftab720\partightenfactor0
-\cf2 \cb3 \
-\
-firebase-hosting-pull-request.yml\
-\pard\pardeftab720\qc\partightenfactor0
-\cf2 \cb3 \
-\pard\pardeftab720\partightenfactor0
-\cf2 \cb3 \
-\pard\pardeftab720\qc\partightenfactor0
-\cf2 \cb3 \
-Auto\
-\
-}
+	. \'ec}

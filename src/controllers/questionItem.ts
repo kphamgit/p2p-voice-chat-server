@@ -45,6 +45,9 @@ interface ScoringOptions {
     // optional, display only: the stress words' IPA, "accept: əkˈsept, apology: əˈpɒlədʒi"
     // (or a JSON object as text); VoiceAnalyzer returns each word's syllables from it
     stress_words_ipa?: string;
+    // optional, display only: the stress words' Vietnamese pronunciation code, syllables
+    // separated by hyphens, as JSON text {"apology": "ơ-pô-lơ-di"} (same formats as the IPA)
+    stress_words_viet?: string;
 }
 
 const SCORING_RANGES: Record<string, [number, number]> = {
@@ -66,6 +69,9 @@ function scoringOptionsProblem(value: unknown): string | null {
     if (o.stress_words_ipa !== undefined && typeof o.stress_words_ipa !== 'string') {
         return 'scoringOptions.stress_words_ipa must be text.';
     }
+    if (o.stress_words_viet !== undefined && typeof o.stress_words_viet !== 'string') {
+        return 'scoringOptions.stress_words_viet must be text.';
+    }
     if (typeof o.strict_connected_speech !== 'boolean') return 'scoringOptions.strict_connected_speech must be true or false.';
     if (o.stress_source !== 'dictionary' && o.stress_source !== 'reference') {
         return 'scoringOptions.stress_source must be dictionary or reference.';
@@ -77,7 +83,7 @@ function scoringOptionsProblem(value: unknown): string | null {
         }
     }
     const known = new Set([
-        'targeted_words', 'stress_words', 'stress_words_ipa', 'strict_connected_speech', 'stress_source', ...Object.keys(SCORING_RANGES),
+        'targeted_words', 'stress_words', 'stress_words_ipa', 'stress_words_viet', 'strict_connected_speech', 'stress_source', ...Object.keys(SCORING_RANGES),
     ]);
     const unknown = Object.keys(o).find((k) => !known.has(k));
     return unknown ? `scoringOptions has an unknown option: ${unknown}.` : null;
