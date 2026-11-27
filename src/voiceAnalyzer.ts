@@ -7,7 +7,9 @@
 //   POST /api/analyze-reference  what it measures in a reference audio alone,
 //                                for the admin's "Analyze reference audio"
 //   POST /api/evaluate           a student's recording scored against the
-//                                question's audio (Shadowing, format 9)
+//                                question's audio (Shadowing, format 9); the
+//                                audio may be left out for a connected-speech-
+//                                only question (see connectedSpeechOnly)
 
 import { prisma } from './prisma.js';
 
@@ -36,9 +38,11 @@ export interface Syllabified {
     syllables: { text: string; stress: 'primary' | 'secondary' | null; viet?: string }[];
     cmu_syllable_count: number | null;
     matches_cmu: boolean | null;
-    viet: string | null; // the Vietnamese pronunciation code sent for the word, e.g. "ơ-pô-lơ-di"
-    viet_syllables: string[]; // split at the hyphens
-    viet_matches_ipa: boolean | null; // same count as syllables (null: no code or no syllables)
+    viet: string | null; // the Vietnamese pronunciation code, e.g. "ơ-pô-lơ-di"
+    viet_source: 'client' | 'cmu' | null; // the one sent (stress_words_viet), else made from the CMU dictionary
+    viet_alternatives: string[]; // the generated alternatives (or just the one sent)
+    viet_syllables: string[]; // one per syllable when viet_matches_ipa, else split at every hyphen
+    viet_matches_ipa: boolean | null; // grouped one per syllable (null: no code or no syllables)
 }
 
 // The analyze-reference reply; words[] gets `hyphenated` added (see addHyphenation).
@@ -66,8 +70,9 @@ export interface ReferenceAnalysis {
 // given stress words ("accept, apology"). `stressWordsIpa` (optional, display
 // only): their IPA, "accept: əkˈsept, apology: əˈpɒlədʒi" or a JSON object as
 // text; each word's `syllabified` comes from it. `stressWordsViet` (optional,
-// display only): their Vietnamese pronunciation code, syllables separated by
-// hyphens, in the same formats ("apology: ơ-pô-lơ-di"). Nothing is saved.
+// display only): replaces the Vietnamese pronunciation code the analyzer makes
+// from the CMU dictionary, syllables separated by hyphens, in the same formats
+// ("apology: ơ-pô-lơ-di"). Nothing is saved.
 export async function analyzeReference(
     audio: Buffer,
     sentence: string,
@@ -93,6 +98,9 @@ export async function analyzeReference(
 export interface ScoringOptions {
     targeted_words?: string;
     strict_connected_speech?: boolean;
+    // no longer used: the analyzer's linking check (the link_analyzer package)
+    // has fixed limits and listens to the student's recording only. Saved
+    // questions may still carry it; it isn't sent.
     link_tolerance?: number;
     stress_words?: string;
     stress_contrast_ratio?: number;
@@ -102,6 +110,19 @@ export interface ScoringOptions {
     rise_match_ratio?: number;
     stress_words_ipa?: string; // display only (see analyzeReference)
     stress_words_viet?: string; // display only (see analyzeReference)
+}
+
+// The words of a word-list option ("is, much" or "is much").
+function wordList(value: unknown): string[] {
+    return typeof value === 'string' ? value.split(/[\s,]+/).filter(Boolean) : [];
+}
+
+// A connected-speech-only question: targeted words and no stress words. Its
+// recording can be scored without a reference, since linking is checked in
+// the student's recording only; word stress needs the reference. (The same
+// rule as the Django app's Shadowing and the analyzer's /api/evaluate.)
+export function connectedSpeechOnly(options: { targeted_words?: unknown; stress_words?: unknown } | null | undefined): boolean {
+    return wordList(options?.targeted_words).length > 0 && wordList(options?.stress_words).length === 0;
 }
 
 // The analyzer's verdict on a recording; word_stress_check.words[] gets
@@ -116,11 +137,14 @@ export interface Evaluation {
 }
 
 // `recording` (16 kHz mono WAV) as an attempt at saying `sentence` like
-// `reference` (the question's MP3), scored with `options`. Nothing is saved.
+// `reference` (the question's MP3), scored with `options`. `reference` may be
+// null only for a connected-speech-only question (the analyzer answers 400
+// otherwise); then reference_duration_seconds is null and reference_links,
+// reference_word_timings are empty. Nothing is saved.
 export async function evaluateRecording(
     sentence: string,
     options: ScoringOptions | null,
-    reference: Buffer,
+    reference: Buffer | null,
     recording: Buffer,
 ): Promise<Evaluation> {
     const o = options ?? {};
@@ -130,14 +154,15 @@ export async function evaluateRecording(
     form.append('strict_connected_speech', o.strict_connected_speech === false ? 'false' : 'true');
     form.append('fall_match_ratio', String(o.fall_match_ratio ?? 0.75));
     form.append('rise_match_ratio', String(o.rise_match_ratio ?? 0.5));
-    form.append('link_tolerance', String(o.link_tolerance ?? 1.0));
     form.append('stress_words', o.stress_words ?? '');
     form.append('stress_contrast_ratio', String(o.stress_contrast_ratio ?? 0.6));
     form.append('melody_min_similarity', String(o.melody_min_similarity ?? 0.35));
     form.append('stress_source', o.stress_source === 'reference' ? 'reference' : 'dictionary');
     form.append('stress_words_ipa', o.stress_words_ipa ?? '');
     form.append('stress_words_viet', o.stress_words_viet ?? '');
-    form.append('reference_file', new Blob([new Uint8Array(reference)], { type: 'audio/mpeg' }), 'reference.mp3');
+    if (reference) {
+        form.append('reference_file', new Blob([new Uint8Array(reference)], { type: 'audio/mpeg' }), 'reference.mp3');
+    }
     form.append('recorded_file', new Blob([new Uint8Array(recording)], { type: 'audio/wav' }), 'recording.wav');
     const evaluation = (await post('/api/evaluate', form, 'The voice assessment')) as Evaluation;
     await addHyphenation(evaluation.word_stress_check?.words ?? []).catch((err) =>

@@ -2,7 +2,7 @@ import { Request, Response } from 'express';
 import { randomUUID } from 'node:crypto';
 import UploadToS3, { RECORDINGS_PREFIX } from './upload_to_s3.js';
 import { isOpenAiConfigured, transcribeAudio, translateEnToVi, type AudioFile } from '../openai.js';
-import { evaluateRecording, VoiceAnalyzerError, type ScoringOptions } from '../voiceAnalyzer.js';
+import { connectedSpeechOnly, evaluateRecording, VoiceAnalyzerError, type ScoringOptions } from '../voiceAnalyzer.js';
 import { plainText } from '../audio.js';
 import { prisma } from '../prisma.js';
 
@@ -105,7 +105,9 @@ class SpeechController {
     // the multipart `audio` (16 kHz mono 16-bit WAV, as the Flutter app
     // records) and an `itemId` form field. The sentence, the reference (the
     // question's audio) and the scoring options are the question's, read here
-    // so the app can't change what it's scored against. Nothing is saved.
+    // so the app can't change what it's scored against. A connected-speech-only
+    // question (targeted words, no stress words) may have no audio: linking is
+    // checked in the recording alone. Nothing is saved.
     // → VoiceAnalyzer's evaluation, as the Django app's Shadowing gets it.
     public async shadowing(req: Request, res: Response): Promise<void> {
         const file = req.file;
@@ -135,20 +137,22 @@ class SpeechController {
             res.status(400).send({ message: `Question item ${itemId} is not a Shadowing question with a sentence.` });
             return;
         }
-        if (!item.audio) {
+        const options = item.scoringOptions as ScoringOptions | null;
+        if (!item.audio && !connectedSpeechOnly(options)) {
             res.status(400).send({ message: `Question item ${itemId} has no audio to compare the recording with.` });
             return;
         }
-        let reference: Buffer;
-        try {
-            reference = (await UploadToS3.getObjectBytes(item.audio.s3Key)).body;
-        } catch (err) {
-            console.error(`❌ Reading audio ${item.audio.id} (question ${itemId}) failed:`, err);
-            res.status(502).send({ message: "The question's audio couldn't be read from S3." });
-            return;
+        let reference: Buffer | null = null;
+        if (item.audio) {
+            try {
+                reference = (await UploadToS3.getObjectBytes(item.audio.s3Key)).body;
+            } catch (err) {
+                console.error(`❌ Reading audio ${item.audio.id} (question ${itemId}) failed:`, err);
+                res.status(502).send({ message: "The question's audio couldn't be read from S3." });
+                return;
+            }
         }
         try {
-            const options = item.scoringOptions as ScoringOptions | null;
             res.json(await evaluateRecording(sentence, options, reference, file.buffer));
         } catch (err: any) {
             if (err instanceof VoiceAnalyzerError) {

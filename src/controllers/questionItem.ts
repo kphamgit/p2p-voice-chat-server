@@ -4,6 +4,7 @@ import { prisma } from '../prisma.js';
 import UploadToS3, { QUESTION_ITEM_IMAGES } from './upload_to_s3.js';
 import { adoptPendingImages, copyImages, deleteAllImages, deleteUnusedImages } from '../media.js';
 import { audioJson, plainText } from '../audio.js';
+import { connectedSpeechOnly } from '../voiceAnalyzer.js';
 
 interface ItemBody {
     itemNumber?: number;
@@ -35,7 +36,9 @@ function invalidFormat(format: unknown): boolean {
 interface ScoringOptions {
     targeted_words: string; // words that should link to the next one, e.g. "is" (is_a)
     strict_connected_speech: boolean; // check linking (always on when targeted_words is set)
-    link_tolerance: number; // how much longer a pause between linked words may be than the reference's (0.5–3)
+    // no longer used (the analyzer's linking check has fixed limits and listens to the
+    // student's recording only); still accepted (0.5–3) from older admin apps and saved questions
+    link_tolerance?: number;
     stress_words: string; // "accept, apology": the words whose syllable stress is checked
     stress_contrast_ratio: number; // share of the reference's stressed/unstressed contrast to reach (0.1–1)
     melody_min_similarity: number; // melody shape similarity for "Same melody" (0.1–0.9)
@@ -45,13 +48,16 @@ interface ScoringOptions {
     // optional, display only: the stress words' IPA, "accept: əkˈsept, apology: əˈpɒlədʒi"
     // (or a JSON object as text); VoiceAnalyzer returns each word's syllables from it
     stress_words_ipa?: string;
-    // optional, display only: the stress words' Vietnamese pronunciation code, syllables
-    // separated by hyphens, as JSON text {"apology": "ơ-pô-lơ-di"} (same formats as the IPA)
+    // optional, display only: replaces the Vietnamese pronunciation code VoiceAnalyzer makes
+    // from the CMU dictionary, syllables separated by hyphens, as JSON text
+    // {"apology": "ơ-pô-lơ-di"} (same formats as the IPA)
     stress_words_viet?: string;
+    // optional, display only: a helper word per targeted word (lower case), shown to the student
+    // under that word's link, e.g. { have: "vờ" }
+    helper_words?: Record<string, string>;
 }
 
 const SCORING_RANGES: Record<string, [number, number]> = {
-    link_tolerance: [0.5, 3],
     stress_contrast_ratio: [0.1, 1],
     melody_min_similarity: [0.1, 0.9],
     fall_match_ratio: [0.1, 1],
@@ -72,9 +78,20 @@ function scoringOptionsProblem(value: unknown): string | null {
     if (o.stress_words_viet !== undefined && typeof o.stress_words_viet !== 'string') {
         return 'scoringOptions.stress_words_viet must be text.';
     }
+    const helpers = o.helper_words;
+    if (helpers !== undefined && (
+        helpers === null || typeof helpers !== 'object' || Array.isArray(helpers)
+        || Object.values(helpers).some((v) => typeof v !== 'string')
+    )) {
+        return 'scoringOptions.helper_words must be an object of word → helper word (text).';
+    }
     if (typeof o.strict_connected_speech !== 'boolean') return 'scoringOptions.strict_connected_speech must be true or false.';
     if (o.stress_source !== 'dictionary' && o.stress_source !== 'reference') {
         return 'scoringOptions.stress_source must be dictionary or reference.';
+    }
+    const tolerance = o.link_tolerance;
+    if (tolerance !== undefined && (typeof tolerance !== 'number' || !Number.isFinite(tolerance) || tolerance < 0.5 || tolerance > 3)) {
+        return 'scoringOptions.link_tolerance must be a number from 0.5 to 3.';
     }
     for (const [key, [min, max]] of Object.entries(SCORING_RANGES)) {
         const n = o[key];
@@ -83,7 +100,7 @@ function scoringOptionsProblem(value: unknown): string | null {
         }
     }
     const known = new Set([
-        'targeted_words', 'stress_words', 'stress_words_ipa', 'stress_words_viet', 'strict_connected_speech', 'stress_source', ...Object.keys(SCORING_RANGES),
+        'targeted_words', 'stress_words', 'stress_words_ipa', 'stress_words_viet', 'helper_words', 'strict_connected_speech', 'stress_source', 'link_tolerance', ...Object.keys(SCORING_RANGES),
     ]);
     const unknown = Object.keys(o).find((k) => !known.has(k));
     return unknown ? `scoringOptions has an unknown option: ${unknown}.` : null;
@@ -147,11 +164,21 @@ async function audioIdsProblem(body: ItemBody): Promise<string | null> {
     return null;
 }
 
-// A Shadowing question (format 9) must have audio, saying its question text.
-// Checked on what the item will be once saved. Null when fine.
-async function shadowingProblem(format: number, questionText: string | null, audioId: number | null): Promise<string | null> {
+// A Shadowing question (format 9) must have audio, saying its question text,
+// unless it checks connected speech only (targeted words, no stress words):
+// linking is checked in the student's recording alone. Checked on what the
+// item will be once saved. Null when fine.
+async function shadowingProblem(
+    format: number,
+    questionText: string | null,
+    audioId: number | null,
+    scoringOptions: unknown,
+): Promise<string | null> {
     if (format !== 9) return null;
-    if (audioId === null) return 'A Shadowing question needs audio: generate a voice, or pick one from the library.';
+    if (audioId === null) {
+        if (connectedSpeechOnly(scoringOptions as Record<string, unknown> | null)) return null;
+        return 'A Shadowing question needs audio: generate a voice, or pick one from the library (it can be left out only when it checks connected speech only: targeted words and no stress words).';
+    }
     const audio = await prisma.audio.findUnique({ where: { id: audioId }, select: { text: true } });
     if (audio && plainText(audio.text) !== plainText(questionText)) {
         return `A Shadowing question's audio must say its question text, but the audio says “${audio.text}”.`;
@@ -214,7 +241,7 @@ class QuestionItemController {
             }
             const audioProblem =
                 (await audioIdsProblem(req.body as ItemBody)) ??
-                (await shadowingProblem(format ?? 1, questionText ?? null, audioId ?? null));
+                (await shadowingProblem(format ?? 1, questionText ?? null, audioId ?? null, scoringOptions ?? null));
             if (audioProblem) {
                 res.status(400).send({ message: audioProblem });
                 return;
@@ -355,16 +382,17 @@ class QuestionItemController {
             }
             let audioProblem = await audioIdsProblem(req.body as ItemBody);
             // The Shadowing rule, on the item as it will be, when this changes any of what it's about.
-            if (!audioProblem && (format !== undefined || questionText !== undefined || audioId !== undefined)) {
+            if (!audioProblem && (format !== undefined || questionText !== undefined || audioId !== undefined || scoringOptions !== undefined)) {
                 const current = await prisma.questionItem.findUnique({
                     where: { id },
-                    select: { format: true, questionText: true, audioId: true },
+                    select: { format: true, questionText: true, audioId: true, scoringOptions: true },
                 });
                 if (current) {
                     audioProblem = await shadowingProblem(
                         format ?? current.format,
                         questionText === undefined ? current.questionText : questionText,
                         audioId === undefined ? current.audioId : audioId,
+                        scoringOptions === undefined ? current.scoringOptions : scoringOptions,
                     );
                 }
             }
